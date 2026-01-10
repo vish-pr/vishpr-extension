@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VishPro Agent</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      background: #2a2a2a;
+      padding: 16px;
+      border-bottom: 1px solid #3a3a3a;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .settings-icon {
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .settings-icon:hover {
+      background: #374151;
+      color: #e0e0e0;
+    }
+
+    .settings-icon.active {
+      background: #2563eb;
+      color: white;
+    }
+
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      padding: 12px;
+      border-radius: 8px;
+      max-width: 90%;
+      word-wrap: break-word;
+    }
+
+    .message.user {
+      background: #2563eb;
+      align-self: flex-end;
+      margin-left: auto;
+    }
+
+    .message.assistant {
+      background: #2a2a2a;
+      align-self: flex-start;
+    }
+
+    .message.system {
+      background: #374151;
+      align-self: center;
+      font-size: 13px;
+      font-style: italic;
+      text-align: center;
+    }
+
+    .input-container {
+      padding: 16px;
+      background: #2a2a2a;
+      border-top: 1px solid #3a3a3a;
+      display: flex;
+      gap: 8px;
+    }
+
+    #messageInput {
+      flex: 1;
+      padding: 10px 12px;
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 14px;
+      resize: none;
+      min-height: 40px;
+      max-height: 120px;
+    }
+
+    #messageInput:focus {
+      outline: none;
+      border-color: #2563eb;
+    }
+
+    #sendButton {
+      padding: 10px 20px;
+      background: #2563eb;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+
+    #sendButton:hover {
+      background: #1d4ed8;
+    }
+
+    #sendButton:disabled {
+      background: #374151;
+      cursor: not-allowed;
+    }
+
+    .settings {
+      background: #2a2a2a;
+      border-bottom: 1px solid #3a3a3a;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+      max-height: 200px;
+    }
+
+    .settings.hidden {
+      max-height: 0;
+      border-bottom: none;
+    }
+
+    .settings-content {
+      padding: 16px;
+    }
+
+    .settings-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #9ca3af;
+      margin-bottom: 6px;
+    }
+
+    .settings input {
+      width: 100%;
+      padding: 8px;
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 13px;
+    }
+
+    .settings input::placeholder {
+      color: #666;
+    }
+
+    .model-select {
+      width: 100%;
+      padding: 8px;
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .model-select:focus {
+      outline: none;
+      border-color: #2563eb;
+    }
+
+    .api-key-status {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 16px;
+      pointer-events: none;
+    }
+
+    #apiKey.valid {
+      border-color: #10b981 !important;
+    }
+
+    #apiKey.invalid {
+      border-color: #ef4444 !important;
+    }
+
+    #apiKey.verifying {
+      border-color: #f59e0b !important;
+    }
+
+    .action-button {
+      background: transparent;
+      border: 1px solid #3a3a3a;
+      color: #9ca3af;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .action-button:hover {
+      background: #374151;
+      color: #e0e0e0;
+      border-color: #4a5568;
+    }
+
+    .action-button.primary {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: white;
+    }
+
+    .action-button.primary:hover {
+      background: #1d4ed8;
+    }
+
+    .action-button.primary:disabled {
+      background: #374151;
+      border-color: #374151;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .extraction-panel {
+      background: #2a2a2a;
+      border-bottom: 1px solid #3a3a3a;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .extraction-panel.hidden {
+      max-height: 0;
+      border-bottom: none;
+    }
+
+    .extraction-content {
+      padding: 16px;
+    }
+
+    .extraction-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #3a3a3a;
+      padding-bottom: 8px;
+    }
+
+    .extraction-tab {
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      color: #9ca3af;
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .extraction-tab:hover {
+      background: #374151;
+      color: #e0e0e0;
+    }
+
+    .extraction-tab.active {
+      background: #2563eb;
+      color: white;
+    }
+
+    .extraction-item {
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .extraction-item:hover {
+      border-color: #2563eb;
+    }
+
+    .extraction-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 6px;
+    }
+
+    .extraction-item-title {
+      font-weight: 500;
+      font-size: 13px;
+      color: #e0e0e0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .extraction-item-time {
+      font-size: 11px;
+      color: #6b7280;
+      white-space: nowrap;
+      margin-left: 8px;
+    }
+
+    .extraction-item-url {
+      font-size: 11px;
+      color: #6b7280;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 6px;
+    }
+
+    .extraction-item-stats {
+      display: flex;
+      gap: 12px;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    .extraction-detail {
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .extraction-detail-header {
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #3a3a3a;
+    }
+
+    .extraction-detail-title {
+      font-weight: 600;
+      color: #e0e0e0;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .extraction-detail-url {
+      font-size: 12px;
+      color: #6b7280;
+      word-break: break-all;
+    }
+
+    .extraction-detail-section {
+      margin-top: 12px;
+    }
+
+    .extraction-detail-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #9ca3af;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .extraction-detail-content {
+      font-size: 12px;
+      color: #d1d5db;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0f0f0f;
+      padding: 8px;
+      border-radius: 4px;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+
+    .action-history-item {
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+
+    .action-history-time {
+      color: #6b7280;
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .action-history-text {
+      color: #d1d5db;
+    }
+
+    .no-data {
+      text-align: center;
+      color: #6b7280;
+      font-size: 13px;
+      padding: 20px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <h1 id="headerTitle">VishPro Agent</h1>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button id="historyToggle" class="action-button" title="View history">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 6v6l4 2"></path>
+          </svg>
+        </button>
+        <button id="settingsToggle" class="settings-icon" title="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v6m0 6v6m5.2-13.2l-4.2 4.2m-2.8 2.8L6 16.8m13.2 0l-4.2-4.2m-2.8-2.8L6 6"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings hidden" id="settingsPanel">
+    <div class="settings-content">
+      <label class="settings-label">LLM Provider</label>
+      <select id="providerSelect" class="model-select" style="margin-bottom: 12px;">
+        <option value="gemini">Google Gemini</option>
+        <option value="openrouter">OpenRouter</option>
+      </select>
+
+      <div id="geminiSettings">
+        <label class="settings-label">Gemini API Key</label>
+        <div style="position: relative; margin-bottom: 12px;">
+          <input
+            type="password"
+            id="geminiApiKey"
+            placeholder="AIza..."
+          >
+          <span id="geminiApiKeyStatus" class="api-key-status"></span>
+        </div>
+      </div>
+
+      <div id="openrouterSettings" style="display: none;">
+        <label class="settings-label">OpenRouter API Key</label>
+        <div style="position: relative; margin-bottom: 12px;">
+          <input
+            type="password"
+            id="openrouterApiKey"
+            placeholder="sk-or-..."
+          >
+          <span id="openrouterApiKeyStatus" class="api-key-status"></span>
+        </div>
+      </div>
+
+      <label class="settings-label">Intelligence Level</label>
+      <select id="intelligenceSelect" class="model-select">
+        <option value="LOW">Low (Fastest, Cheapest)</option>
+        <option value="MEDIUM" selected>Medium (Recommended)</option>
+        <option value="HIGH">High (Best Quality)</option>
+      </select>
+
+      <div style="margin-top: 12px; padding: 8px; background: #1a1a1a; border-radius: 4px; font-size: 11px; color: #9ca3af;">
+        <strong>Note:</strong> The extension automatically cascades through available models with failover support. Configure API keys for both providers for best reliability.
+      </div>
+    </div>
+  </div>
+
+  <div class="extraction-panel hidden" id="extractionPanel">
+    <div class="extraction-content">
+      <div class="extraction-tabs">
+        <button class="extraction-tab active" data-tab="current">Current Page</button>
+        <button class="extraction-tab" data-tab="history">History</button>
+        <button class="extraction-tab" data-tab="actions">Actions</button>
+      </div>
+
+      <div id="currentTabContent" class="tab-content">
+        <div style="margin-bottom: 12px;">
+          <button id="extractButton" class="action-button primary" style="width: 100%;" title="Extract page content">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"></path>
+            </svg>
+            Extract Content
+          </button>
+        </div>
+        <div id="currentTabExtractionContent"></div>
+      </div>
+      <div id="historyTabContent" class="tab-content" style="display: none;"></div>
+      <div id="actionsTabContent" class="tab-content" style="display: none;"></div>
+    </div>
+  </div>
+
+  <div class="chat-container" id="chatContainer"></div>
+
+  <div class="input-container">
+    <textarea
+      id="messageInput"
+      placeholder="Ask me to read the page, click buttons, navigate..."
+      rows="1"
+    ></textarea>
+    <button id="sendButton">Send</button>
+  </div>
+
+  <script src="sidepanel.js" type="module"></script>
+</body>
+</html>
