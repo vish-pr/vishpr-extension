@@ -29,6 +29,25 @@ export class BrowserState {
   constructor() {
     // Main state structure
     this.tabs = new Map();
+    // Track which tab should show expanded content in formatForChat()
+    this.expandedTabId = null;
+  }
+
+  /**
+   * Set which tab should show expanded content in browser state output
+   * @param {number|null} tabId - Tab ID to expand, or null to collapse all
+   */
+  setExpandedTab(tabId) {
+    this.expandedTabId = tabId;
+    logger.info('Set expanded tab', { tabId });
+  }
+
+  /**
+   * Get the currently expanded tab ID
+   * @returns {number|null}
+   */
+  getExpandedTab() {
+    return this.expandedTabId;
   }
 
   /**
@@ -181,8 +200,33 @@ export class BrowserState {
   }
 
   /**
+   * Format a minimal summary of browser state for tier-1 routing
+   * Just shows tab URLs without detailed page content
+   * @returns {string} Brief summary of browser state
+   */
+  formatSummary() {
+    if (this.tabs.size === 0) {
+      return 'Browser: No tabs being tracked. Use BROWSER_ACTION to interact with web pages.';
+    }
+
+    const lines = ['Browser State (summary):'];
+    for (const [tabId, tab] of this.tabs) {
+      lines.push(`  Tab ${tabId}: ${tab.currentUrl}`);
+      if (tab.pageContents.length > 0) {
+        const current = tab.pageContents.filter(pc => pc.status === 'current');
+        if (current.length > 0) {
+          lines.push(`    - Has extracted content (${current[0].content.links?.length || 0} links, ${current[0].content.buttons?.length || 0} buttons)`);
+        }
+      }
+    }
+    lines.push('\nUse BROWSER_ACTION to read page content, click elements, fill forms, or navigate.');
+    return lines.join('\n');
+  }
+
+  /**
    * Format browser state for chat context
    * Returns a formatted string representation suitable for LLM context
+   * When a tab is expanded (via setExpandedTab), shows full page content for that tab
    * @returns {string} Formatted browser state
    */
   formatForChat() {
@@ -190,7 +234,8 @@ export class BrowserState {
     lines.push('=== BROWSER STATE ===\n');
 
     for (const [tabId, tab] of this.tabs) {
-      lines.push(`Tab ${tabId}:`);
+      const isExpanded = tabId === this.expandedTabId;
+      lines.push(`Tab ${tabId}${isExpanded ? ' [EXPANDED]' : ''}:`);
       lines.push(`  Current URL: ${tab.currentUrl}`);
 
       if (tab.urlHistory.length > 1) {
@@ -210,21 +255,75 @@ export class BrowserState {
           lines.push(`    ${idx + 1}. ${statusStr} ${pc.url}`);
           lines.push(`       Title: ${pc.content.title || 'N/A'}`);
 
-          if (pc.content.text) {
-            const textPreview = pc.content.text.substring(0, 200);
-            lines.push(`       Text: ${textPreview}${pc.content.text.length > 200 ? '...' : ''}`);
-          }
+          // If this tab is expanded, show full content
+          if (isExpanded && pc.status === 'current') {
+            // Full text content
+            if (pc.content.text) {
+              lines.push(`       Text: ${pc.content.text}`);
+            }
 
-          if (pc.content.buttons && pc.content.buttons.length > 0) {
-            lines.push(`       Buttons: ${pc.content.buttons.length} buttons`);
-          }
+            // Full links with details
+            if (pc.content.links && pc.content.links.length > 0) {
+              lines.push(`       Links (${pc.content.links.length}):`);
+              pc.content.links.forEach(link => {
+                const linkText = link.text ? ` "${link.text}"` : '';
+                lines.push(`         [${link.id}]${linkText} -> ${link.href || 'no href'}`);
+              });
+            }
 
-          if (pc.content.links && pc.content.links.length > 0) {
-            lines.push(`       Links: ${pc.content.links.length} links`);
-          }
+            // Full buttons with details
+            if (pc.content.buttons && pc.content.buttons.length > 0) {
+              lines.push(`       Buttons (${pc.content.buttons.length}):`);
+              pc.content.buttons.forEach(btn => {
+                const btnText = btn.text ? ` "${btn.text}"` : '';
+                const btnClass = btn.class ? ` class="${btn.class}"` : '';
+                lines.push(`         [${btn.id}]${btnText}${btnClass}`);
+              });
+            }
 
-          if (pc.content.inputs && pc.content.inputs.length > 0) {
-            lines.push(`       Inputs: ${pc.content.inputs.length} form inputs`);
+            // Full inputs with details
+            if (pc.content.inputs && pc.content.inputs.length > 0) {
+              lines.push(`       Inputs (${pc.content.inputs.length}):`);
+              pc.content.inputs.forEach(input => {
+                const inputType = input.type ? ` type="${input.type}"` : '';
+                const inputPlaceholder = input.placeholder ? ` placeholder="${input.placeholder}"` : '';
+                lines.push(`         [${input.id}]${inputType}${inputPlaceholder}`);
+              });
+            }
+
+            // Selects
+            if (pc.content.selects && pc.content.selects.length > 0) {
+              lines.push(`       Selects (${pc.content.selects.length}):`);
+              pc.content.selects.forEach(sel => {
+                lines.push(`         [${sel.id}] ${sel.name || 'unnamed'}`);
+              });
+            }
+
+            // Textareas
+            if (pc.content.textareas && pc.content.textareas.length > 0) {
+              lines.push(`       Textareas (${pc.content.textareas.length}):`);
+              pc.content.textareas.forEach(ta => {
+                lines.push(`         [${ta.id}] ${ta.placeholder || 'no placeholder'}`);
+              });
+            }
+          } else {
+            // Collapsed view - show summary only
+            if (pc.content.text) {
+              const textPreview = pc.content.text.substring(0, 200);
+              lines.push(`       Text: ${textPreview}${pc.content.text.length > 200 ? '...' : ''}`);
+            }
+
+            if (pc.content.buttons && pc.content.buttons.length > 0) {
+              lines.push(`       Buttons: ${pc.content.buttons.length} buttons`);
+            }
+
+            if (pc.content.links && pc.content.links.length > 0) {
+              lines.push(`       Links: ${pc.content.links.length} links`);
+            }
+
+            if (pc.content.inputs && pc.content.inputs.length > 0) {
+              lines.push(`       Inputs: ${pc.content.inputs.length} form inputs`);
+            }
           }
         });
       }
@@ -241,7 +340,8 @@ export class BrowserState {
    */
   toJSON() {
     const json = {
-      tabs: {}
+      tabs: {},
+      expandedTabId: this.expandedTabId
     };
 
     for (const [tabId, tab] of this.tabs) {
@@ -262,6 +362,7 @@ export class BrowserState {
    */
   fromJSON(json) {
     this.tabs.clear();
+    this.expandedTabId = json.expandedTabId || null;
 
     if (json.tabs) {
       for (const [tabId, tab] of Object.entries(json.tabs)) {
@@ -269,7 +370,7 @@ export class BrowserState {
       }
     }
 
-    logger.info('Imported browser state', { tabCount: this.tabs.size });
+    logger.info('Imported browser state', { tabCount: this.tabs.size, expandedTabId: this.expandedTabId });
   }
 
   /**
@@ -277,6 +378,7 @@ export class BrowserState {
    */
   clear() {
     this.tabs.clear();
+    this.expandedTabId = null;
     logger.info('Cleared all browser state');
   }
 
@@ -364,8 +466,9 @@ export class BrowserState {
 
   /**
    * Extract page content from a tab and update browser state
+   * Sets this tab as expanded so full content appears in formatForChat()
    * @param {number} tabId - Tab ID
-   * @returns {Promise<Object>} Result with content and page_url
+   * @returns {Promise<Object>} Result with page_url and extraction status
    */
   async extractAndStoreContent(tabId) {
     // Get current tab URL
@@ -398,7 +501,22 @@ export class BrowserState {
     // Add page content to browser state
     this.addPageContent(tabId, pageUrl, content);
 
-    return { content, page_url: pageUrl };
+    // Set this tab as expanded so content appears in browser state output
+    this.setExpandedTab(tabId);
+
+    // Return brief result - full content is now in browser state
+    return {
+      extracted: true,
+      page_url: pageUrl,
+      tabId,
+      summary: {
+        title: content.title || 'N/A',
+        links: content.links?.length || 0,
+        buttons: content.buttons?.length || 0,
+        inputs: content.inputs?.length || 0
+      },
+      note: 'Full page content is available in the BROWSER STATE section above (tab marked as [EXPANDED])'
+    };
   }
 
   /**
@@ -528,12 +646,13 @@ export function getBrowserState() {
 
 /**
  * Get browser state in all formats (formatted, JSON, instance)
- * @returns {Object} Object containing formatted, json, and instance
+ * @returns {Object} Object containing formatted, summary, json, and instance
  */
 export function getBrowserStateBundle() {
   const state = getBrowserState();
   return {
     formatted: state.formatForChat(),
+    summary: state.formatSummary(),
     json: state.toJSON(),
     instance: state
   };

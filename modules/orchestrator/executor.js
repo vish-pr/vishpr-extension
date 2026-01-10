@@ -1,9 +1,14 @@
 /**
- * Step execution engine for orchestrator
- * Handles polymorphic step execution, multi-turn loops, and context accumulation
+ * Action executor
+ *
+ * Design:
+ * - Params in, result out
+ * - Everything needed passed in params
+ * - Only final result returned to caller
+ * - Internal conversation stays internal
  */
 
-import { mapParamsFromContext, validateParams } from './context.js';
+import { validateParams } from './context.js';
 import { renderTemplate, resolveSystemPrompt } from './templates.js';
 import logger from '../logger.js';
 import { getBrowserStateBundle } from '../browser-state.js';
@@ -11,32 +16,20 @@ import { generate } from '../llm.js';
 import { browserActions } from '../actions/browser-actions.js';
 import { chatAction, CHAT_RESPONSE } from '../actions/chat-action.js';
 import { routerAction } from '../actions/router-action.js';
+import { browserActionRouter } from '../actions/browser-action-router.js';
 
-/**
- * Execution timeout constants
- */
 const STEP_TIMEOUT_MS = 20000;
 const LLM_TIMEOUT_MS = 40000;
 
-/**
- * Build the global actions registry
- * Combines all action definitions into a single lookup object
- */
+// ============================================
+// Actions Registry
+// ============================================
+
 function buildActionsRegistry() {
   const registry = {};
+  const allActions = [...browserActions, chatAction, routerAction, browserActionRouter];
 
-  // Combine all action modules
-  const allActions = [
-    ...browserActions,
-    chatAction,
-    routerAction
-  ];
-
-  // Build lookup by action name
   for (const action of allActions) {
-    if (registry[action.name]) {
-      logger.warn(`Duplicate action name: ${action.name}`);
-    }
     registry[action.name] = action;
   }
 
@@ -44,321 +37,256 @@ function buildActionsRegistry() {
   return registry;
 }
 
-// Global actions registry
 const actionsRegistry = buildActionsRegistry();
 
-/**
- * Get an action by name from the registry
- * @param {string} actionName - Name of the action
- * @returns {Object|undefined} Action definition or undefined if not found
- */
 export function getAction(actionName) {
   return actionsRegistry[actionName];
 }
 
-/**
- * Get browser state and prepare context with it
- * @param {Object} context - Current context
- * @returns {Object} { contextWithBrowserState, browserStateFormatted }
- */
-function prepareBrowserStateContext(context) {
-  const { formatted, json } = getBrowserStateBundle();
-
-  return {
-    contextWithBrowserState: {
-      ...context,
-      browser_state_formatted: formatted,
-      browser_state_json: json
-    },
-    browserStateFormatted: formatted
-  };
-}
+// ============================================
+// Execute Action
+// ============================================
 
 /**
- * Append browser state to the last user message in conversation
- * @param {Array} conversation - Array of message objects
- * @param {string} browserStateFormatted - Formatted browser state string
- * @returns {Array} New conversation with browser state appended to last user message
- */
-function appendBrowserStateToLastMessage(conversation, browserStateFormatted) {
-  const conversationCopy = conversation.map(msg => ({ ...msg }));
-
-  for (let i = conversationCopy.length - 1; i >= 0; i--) {
-    if (conversationCopy[i].role === 'user') {
-      conversationCopy[i].content = `${conversationCopy[i].content}\n\n${browserStateFormatted}`;
-      break;
-    }
-  }
-
-  return conversationCopy;
-}
-
-/**
- * Prune conversation to prevent it from getting too long
- * Keeps first 2 messages (system + initial user) + last 6 messages
- * @param {Array} conversation - Conversation array to prune (modified in place)
- */
-function pruneConversation(conversation) {
-  if (conversation.length > 10) {
-    conversation.splice(2, conversation.length - 8);
-    conversation.splice(2, 0, {
-      role: 'system',
-      content: '... (earlier conversation history truncated) ...'
-    });
-  }
-}
-
-/**
- * Execute an action with its steps
+ * Execute an action
+ *
  * @param {Object} action - Action definition
- * @param {Object} initialParams - Initial parameters
- * @returns {Promise<Object>} Action result
+ * @param {Object} params - All input parameters (flat object)
+ * @returns {Promise<Object>} Result (flat object)
  */
-export async function executeAction(action, initialParams = {}) {
-  let context = { ...initialParams };
-  let lastOutput = null;
+export async function executeAction(action, params = {}) {
+  logger.info(`Action: ${action.name}`, { params });
 
-  logger.info(`Action Start: ${action.name}`, { params: initialParams });
-
-  // Validate input parameters if schema is provided
+  // Validate input
   if (action.input_schema) {
-    const validation = validateParams(initialParams, action.input_schema);
+    const validation = validateParams(params, action.input_schema);
     if (!validation.valid) {
-      logger.warn(`Input validation warnings for ${action.name}`, { errors: validation.errors });
+      logger.warn(`Validation warnings: ${action.name}`, { errors: validation.errors });
     }
   }
 
-  // Execute each step sequentially
+  let result = null;
+  let prevResult = null;
+
   for (let i = 0; i < action.steps.length; i++) {
     const step = action.steps[i];
-    logger.info(`Step ${i + 1}/${action.steps.length}: ${action.name}`, {
-      stepType: typeof step === 'function' ? 'function' : typeof step === 'string' ? 'action' : 'llm'
-    });
 
     try {
-      let result;
-
-      // Type 1: Function step (custom logic)
-      if (typeof step === 'function') {
-        logger.debug(`Executing function step in ${action.name}`);
-        result = await executeWithTimeout(
-          step(context),
-          STEP_TIMEOUT_MS
-        );
-        logger.debug(`Function step completed`, { result });
-      }
-      // Type 2: ACTION_NAME (call another action)
-      else if (typeof step === 'string') {
-        logger.info(`Calling sub-action: ${step}`);
-        const subAction = actionsRegistry[step];
-        if (!subAction) {
-          throw new Error(`Action not found: ${step}`);
-        }
-        const subParams = mapParamsFromContext(subAction.input_schema, context);
-        result = await executeAction(subAction, subParams);
-        logger.info(`Sub-action completed: ${step}`);
-      }
-      // Type 3: LLMConfig (LLM call)
-      else if (typeof step === 'object' && step !== null) {
-        if (step.choice) {
-          logger.info(`Starting multi-turn LLM loop`, { maxIterations: step.choice.max_iterations });
-        } else {
-          logger.info(`Executing single LLM call`);
-        }
-        result = await executeLLMStep(step, context);
-      }
-      else {
-        throw new Error(`Invalid step type: ${typeof step}`);
-      }
-
-      // Accumulate context with step results
-      if (result && typeof result === 'object') {
-        Object.assign(context, result);
-        lastOutput = result;
-      }
+      result = await executeStep(step, params, prevResult);
+      prevResult = result;
     } catch (error) {
-      logger.error(`Step ${i + 1} failed in ${action.name}`, { error: error.message, stack: error.stack });
+      logger.error(`Step ${i + 1} failed: ${action.name}`, { error: error.message });
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
     }
   }
 
-  logger.info(`Action Complete: ${action.name}`, { result: lastOutput });
-  return lastOutput || context;
+  logger.info(`Action complete: ${action.name}`);
+  return result;
 }
 
+// ============================================
+// Step Execution
+// ============================================
+
 /**
- * Execute an LLM step (single call or multi-turn agentic loop)
- * @param {Object} llmConfig - LLM configuration (with or without choice)
- * @param {Object} context - Current execution context
- * @returns {Promise<Object>} LLM response or result from stop action
+ * Execute a single step
+ *
+ * @param {Function|Object} step - Step definition
+ * @param {Object} params - Original input params
+ * @param {Object} prevResult - Result from previous step (or null)
  */
-async function executeLLMStep(llmConfig, context) {
-  // Get browser state and prepare context
-  const { contextWithBrowserState, browserStateFormatted } = prepareBrowserStateContext(context);
+async function executeStep(step, params, prevResult) {
+  // Function step: (params, prevResult, browser) => result
+  if (typeof step === 'function') {
+    const browser = getBrowserStateBundle();
+    return await withTimeout(step(params, prevResult, browser), STEP_TIMEOUT_MS);
+  }
 
-  // Resolve system prompt
-  const systemPrompt = await resolveSystemPrompt(
-    llmConfig.system_prompt,
-    contextWithBrowserState,
-    generate
-  );
+  // Sub-action step: { action: 'name', mapParams: (params, prev) => newParams }
+  if (step.action) {
+    const subAction = actionsRegistry[step.action];
+    if (!subAction) throw new Error(`Action not found: ${step.action}`);
 
-  // Initialize conversation
-  const initialMessage = renderTemplate(llmConfig.message, contextWithBrowserState);
+    const subParams = step.mapParams
+      ? step.mapParams(params, prevResult)
+      : params;
+
+    return await executeAction(subAction, subParams);
+  }
+
+  // LLM step: { llm: { message, system_prompt, schema } }
+  // Multi-turn: { llm: {...}, choice: { available_actions, stop_action, max_iterations } }
+  if (step.llm) {
+    return await executeLLMStep(step, params);
+  }
+
+  throw new Error(`Invalid step type`);
+}
+
+// ============================================
+// LLM Execution
+// ============================================
+
+async function executeLLMStep(step, params) {
+  const { llm, choice } = step;
+  const browser = getBrowserStateBundle();
+
+  // Determine which browser state format to use
+  const useSummary = step.use_browser_summary === true;
+  const browserStateText = useSummary ? browser.summary : browser.formatted;
+
+  const templateCtx = {
+    ...params,
+    browser_state_formatted: browser.formatted,
+    browser_state_summary: browser.summary,
+    browser_state_json: browser.json
+  };
+
+  const systemPrompt = await resolveSystemPrompt(llm.system_prompt, templateCtx, generate);
+  const message = renderTemplate(llm.message, templateCtx);
+
+  // Single LLM call - insert browser state as second-to-last message
+  if (!choice) {
+    const baseMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
+    ];
+    const messagesWithBrowser = insertBrowserStateMessage(baseMessages, browserStateText);
+
+    return await withTimeout(
+      generate({
+        messages: messagesWithBrowser,
+        intelligence: llm.intelligence || 'MEDIUM',
+        schema: llm.schema
+      }),
+      LLM_TIMEOUT_MS
+    );
+  }
+
+  // Multi-turn loop (conversation stays internal)
+  // Pass the flag for which browser state format to use
+  return await executeMultiTurn(systemPrompt, message, choice, llm.intelligence, params, useSummary);
+}
+
+async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligence, params, useSummary = false) {
+  const { available_actions, stop_action = CHAT_RESPONSE, max_iterations = 5 } = choice;
+
   const conversation = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: initialMessage }
   ];
 
-  // Single LLM call (no choice)
-  if (!llmConfig.choice) {
-    const conversationWithBrowserState = appendBrowserStateToLastMessage(
-      conversation,
-      browserStateFormatted
-    );
+  for (let i = 0; i < max_iterations; i++) {
+    logger.info(`Turn ${i + 1}/${max_iterations}`);
 
-    return await executeWithTimeout(
-      generate({
-        messages: conversationWithBrowserState,
-        intelligence: llmConfig.intelligence || 'MEDIUM',
-        schema: llmConfig.schema
-      }),
-      LLM_TIMEOUT_MS
-    );
-  }
-
-  // Multi-turn agentic loop
-  const {
-    available_actions,
-    stop_action = CHAT_RESPONSE,
-    max_iterations = 5
-  } = llmConfig.choice;
-
-  logger.info(`Multi-turn loop started`, {
-    maxIterations: max_iterations,
-    availableActions: available_actions,
-    stopAction: stop_action
-  });
-
-  for (let iteration = 0; iteration < max_iterations; iteration++) {
-    logger.info(`Iteration ${iteration + 1}/${max_iterations}`);
-
-    // Build choice schema based on available actions
-    const choiceSchema = buildChoiceSchema(
-      available_actions,
-      stop_action
-    );
-
-    // Prepare conversation with browser state appended
-    const conversationWithBrowserState = appendBrowserStateToLastMessage(
-      conversation,
-      browserStateFormatted
-    );
+    // Fresh browser state each turn - insert as second-to-last message
+    // Use summary for tier-1, full for tier-2
+    const browser = getBrowserStateBundle();
+    const browserStateText = useSummary ? browser.summary : browser.formatted;
+    const messagesWithBrowser = insertBrowserStateMessage(conversation, browserStateText);
 
     // Get LLM choice
-    const choice = await executeWithTimeout(
-      generate({
-        messages: conversationWithBrowserState,
-        intelligence: llmConfig.intelligence || 'MEDIUM',
-        schema: choiceSchema
-      }),
+    const schema = buildChoiceSchema(available_actions, stop_action);
+    const llmChoice = await withTimeout(
+      generate({ messages: messagesWithBrowser, intelligence: intelligence || 'MEDIUM', schema }),
       LLM_TIMEOUT_MS
     );
 
-    logger.info(`LLM chose action: ${choice.tool}`, {
-      tool: choice.tool,
-      justification: choice.justification,
-      params: Object.keys(choice).filter(k => k !== 'tool' && k !== 'justification')
-    });
+    logger.info(`Chose: ${llmChoice.tool}`);
+    conversation.push({ role: 'assistant', content: JSON.stringify(llmChoice, null, 2) });
 
-    // Add LLM's choice to conversation
-    conversation.push({
-      role: 'assistant',
-      content: JSON.stringify(choice, null, 2)
-    });
+    // Stop action -> execute and return final result
+    if (llmChoice.tool === stop_action) {
+      const stopAction = actionsRegistry[stop_action];
+      if (!stopAction) throw new Error(`Stop action not found: ${stop_action}`);
 
-    // Check if stop action chosen
-    if (choice.tool === stop_action) {
-      logger.info(`Stop action reached: ${stop_action}`);
-      const stopActionDef = actionsRegistry[stop_action];
-      if (!stopActionDef) {
-        throw new Error(`Stop action not found: ${stop_action}`);
-      }
-
-      return await executeAction(
-        stopActionDef,
-        { ...context, ...choice }
-      );
+      // Include original params + LLM choice params
+      const stopParams = { ...params, ...pickParams(llmChoice, stopAction) };
+      return await executeAction(stopAction, stopParams);
     }
 
     // Execute chosen action
-    const actionDef = actionsRegistry[choice.tool];
-    if (!actionDef) {
-      throw new Error(`Action not found: ${choice.tool}`);
-    }
+    const actionDef = actionsRegistry[llmChoice.tool];
+    if (!actionDef) throw new Error(`Action not found: ${llmChoice.tool}`);
 
-    const actionResult = await executeAction(
-      actionDef,
-      { ...context, ...choice }
-    );
+    const actionParams = { ...params, ...pickParams(llmChoice, actionDef) };
+    const actionResult = await executeAction(actionDef, actionParams);
 
-    logger.info(`Action result: ${choice.tool}`, { result: actionResult });
-
-    // Add result to conversation
+    // Add result to internal conversation
     conversation.push({
       role: 'user',
-      content: `Action completed successfully. Result:\n${JSON.stringify(actionResult, null, 2)}`
+      content: `Result:\n${JSON.stringify(actionResult, null, 2)}`
     });
 
-    // Accumulate context
-    Object.assign(context, actionResult);
-
-    // Prune conversation if getting too long
-    pruneConversation(conversation);
+    // Prune if too long
+    if (conversation.length > 10) {
+      conversation.splice(2, conversation.length - 8);
+    }
   }
 
-  // Max iterations reached - force stop action
-  console.warn(`[Orchestrator] Max iterations (${max_iterations}) reached, forcing stop action`);
-  logger.warn(`Max iterations reached (${max_iterations}), forcing stop action`);
-  const stopActionDef = actionsRegistry[stop_action];
-  return await executeAction(
-    stopActionDef,
-    {
-      ...context,
-      note: 'Maximum iterations reached',
-      tool: stop_action
-    }
-  );
+  // Max iterations reached
+  logger.warn(`Max iterations reached`);
+  const stopAction = actionsRegistry[stop_action];
+  return await executeAction(stopAction, {
+    response: 'Unable to complete within allowed iterations.'
+  });
+}
+
+// ============================================
+// Helpers
+// ============================================
+
+function pickParams(source, actionDef) {
+  if (!actionDef.input_schema?.properties) return {};
+
+  const picked = {};
+  for (const key of Object.keys(actionDef.input_schema.properties)) {
+    if (key in source) picked[key] = source[key];
+  }
+  return picked;
 }
 
 /**
- * Build JSON schema for action choice
- * @param {string[]} availableActions - List of available action names
- * @param {string} stopAction - Name of stop action
- * @returns {Object} JSON Schema for choice
+ * Insert browser state as a separate message before the last user message
+ * Pattern: [system, ...messages, BROWSER_STATE, last_user_message]
  */
+function insertBrowserStateMessage(conversation, browserFormatted) {
+  const copy = conversation.map(m => ({ ...m }));
+
+  // Find the last user message index
+  let lastUserIdx = -1;
+  for (let i = copy.length - 1; i >= 0; i--) {
+    if (copy[i].role === 'user') {
+      lastUserIdx = i;
+      break;
+    }
+  }
+
+  // Insert browser state as a user message right before the last user message
+  const browserMessage = { role: 'user', content: `Current Browser State:\n${browserFormatted}` };
+
+  if (lastUserIdx > 0) {
+    copy.splice(lastUserIdx, 0, browserMessage);
+  } else {
+    // If no user message found or it's at index 0, append browser state
+    copy.push(browserMessage);
+  }
+
+  return copy;
+}
+
 function buildChoiceSchema(availableActions, stopAction) {
-  const actionDescriptions = [];
-  const allParameters = {};
+  const descriptions = [];
+  const allParams = {};
 
-  // Build descriptions and collect parameters in single loop
-  for (const actionName of availableActions) {
-    const action = actionsRegistry[actionName];
+  for (const name of availableActions) {
+    const action = actionsRegistry[name];
+    const desc = action?.description || name;
+    descriptions.push(`${name}: ${desc}${name === stopAction ? ' [STOP]' : ''}`);
 
-    // Add to descriptions
-    const desc = action?.description || actionName;
-    const isStop = actionName === stopAction ? ' [STOP ACTION]' : '';
-    actionDescriptions.push(`${actionName}: ${desc}${isStop}`);
-
-    // Collect parameters (skip duplicates to avoid conflicts)
     if (action?.input_schema?.properties) {
-      for (const [key, propSchema] of Object.entries(action.input_schema.properties)) {
-        if (!allParameters[key]) {
-          allParameters[key] = {
-            ...propSchema,
-            description: `${propSchema.description || ''} (for ${actionName})`.trim()
-          };
-        }
+      for (const [k, v] of Object.entries(action.input_schema.properties)) {
+        if (!(k in allParams)) allParams[k] = { ...v };
       }
     }
   }
@@ -369,30 +297,19 @@ function buildChoiceSchema(availableActions, stopAction) {
       tool: {
         type: 'string',
         enum: availableActions,
-        description: `Choose the next action to execute. Use ${stopAction} when the task is complete or you need to respond to the user.\n\nAvailable actions:\n${actionDescriptions.join('\n')}`
+        description: `Choose action:\n${descriptions.join('\n')}`
       },
-      justification: {
-        type: 'string',
-        description: 'Explain why you chose this action and what you expect it to accomplish'
-      },
-      ...allParameters
+      justification: { type: 'string', description: 'Why?' },
+      ...allParams
     },
     required: ['tool', 'justification'],
     additionalProperties: false
   };
 }
 
-/**
- * Execute a promise with timeout
- * @param {Promise} promise - Promise to execute
- * @param {number} timeoutMs - Timeout in milliseconds
- * @returns {Promise} Result or timeout error
- */
-async function executeWithTimeout(promise, timeoutMs) {
+function withTimeout(promise, ms) {
   return Promise.race([
     promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Operation timed out after ${timeoutMs}ms`)), timeoutMs)
-    )
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${ms}ms`)), ms))
   ]);
 }

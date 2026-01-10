@@ -57,9 +57,9 @@ export const READ_PAGE = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
-      return await browserState.extractAndStoreContent(context.tabId);
+      return await browserState.extractAndStoreContent(params.tabId);
     }
   ]
 };
@@ -103,14 +103,14 @@ export const CLICK_ELEMENT = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
       const modifiers = {
-        newTab: context.newTab || false,
-        newTabActive: context.newTabActive || false,
-        download: context.download || false
+        newTab: params.newTab || false,
+        newTabActive: params.newTabActive || false,
+        download: params.download || false
       };
-      return await browserState.clickElement(context.tabId, context.elementId, modifiers);
+      return await browserState.clickElement(params.tabId, params.elementId, modifiers);
     }
   ]
 };
@@ -142,9 +142,9 @@ export const NAVIGATE_TO = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
-      return await browserState.navigateTo(context.tabId, context.url);
+      return await browserState.navigateTo(params.tabId, params.url);
     }
   ]
 };
@@ -172,9 +172,9 @@ export const GET_PAGE_STATE = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       return await executeScript(
-        context.tabId,
+        params.tabId,
         () => {
           return {
             scroll_y: window.scrollY,
@@ -234,13 +234,13 @@ export const FILL_FORM = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
       return await browserState.fillForm(
-        context.tabId,
-        context.form_fields,
-        context.submit || false,
-        context.submit_element_id
+        params.tabId,
+        params.form_fields,
+        params.submit || false,
+        params.submit_element_id
       );
     }
   ]
@@ -277,9 +277,9 @@ export const SELECT_OPTION = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       return await executeScript(
-        context.tabId,
+        params.tabId,
         (elementId, value) => {
           const select = document.querySelector(`[data-vish-id="${elementId}"]`);
           if (!select || select.tagName !== 'SELECT') {
@@ -304,7 +304,7 @@ export const SELECT_OPTION = {
 
           return { selected: false, error: 'Option not found' };
         },
-        [context.elementId, context.value]
+        [params.elementId, params.value]
       );
     }
   ]
@@ -341,9 +341,9 @@ export const CHECK_CHECKBOX = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       return await executeScript(
-        context.tabId,
+        params.tabId,
         (elementId, shouldCheck) => {
           const checkbox = document.querySelector(`[data-vish-id="${elementId}"]`);
           if (!checkbox || checkbox.type !== 'checkbox') {
@@ -358,7 +358,7 @@ export const CHECK_CHECKBOX = {
 
           return { modified: false, checked: shouldCheck, note: 'Already in desired state' };
         },
-        [context.elementId, context.checked]
+        [params.elementId, params.checked]
       );
     }
   ]
@@ -391,9 +391,9 @@ export const SUBMIT_FORM = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       return await executeScript(
-        context.tabId,
+        params.tabId,
         (elementId) => {
           const element = document.querySelector(`[data-vish-id="${elementId}"]`);
           if (!element) {
@@ -414,7 +414,7 @@ export const SUBMIT_FORM = {
 
           return { submitted: false, error: 'Element is not a form or submit button' };
         },
-        [context.elementId]
+        [params.elementId]
       );
     }
   ]
@@ -456,13 +456,13 @@ export const SCROLL_TO = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
       return await browserState.scrollAndWait(
-        context.tabId,
-        context.direction,
-        context.pixels || 500,
-        context.wait_ms || 500
+        params.tabId,
+        params.direction,
+        params.pixels || 500,
+        params.wait_ms || 500
       );
     }
   ]
@@ -495,14 +495,14 @@ export const WAIT_FOR_LOAD = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
-      const timeout = context.timeout_ms || 10000;
+    async (params) => {
+      const timeout = params.timeout_ms || 10000;
       const startTime = Date.now();
 
       while (Date.now() - startTime < timeout) {
         try {
           const result = await executeScript(
-            context.tabId,
+            params.tabId,
             () => ({
               loaded: document.readyState === 'complete',
               ready_state: document.readyState
@@ -559,13 +559,13 @@ export const WAIT_FOR_ELEMENT = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
-      const timeout = context.timeout_ms || 5000;
+    async (params) => {
+      const timeout = params.timeout_ms || 5000;
       const startTime = Date.now();
 
       while (Date.now() - startTime < timeout) {
         const result = await executeScript(
-          context.tabId,
+          params.tabId,
           (elementId) => {
             const element = document.querySelector(`[data-vish-id="${elementId}"]`);
             return {
@@ -574,7 +574,7 @@ export const WAIT_FOR_ELEMENT = {
               visible: element ? (element.offsetParent !== null) : false
             };
           },
-          [context.elementId]
+          [params.elementId]
         );
 
         if (result.found) {
@@ -586,7 +586,7 @@ export const WAIT_FOR_ELEMENT = {
 
       return {
         found: false,
-        elementId: context.elementId,
+        elementId: params.elementId,
         error: 'Timeout waiting for element'
       };
     }
@@ -616,9 +616,9 @@ export const GO_BACK = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
-      return await browserState.goBack(context.tabId);
+      return await browserState.goBack(params.tabId);
     }
   ]
 };
@@ -646,9 +646,9 @@ export const GO_FORWARD = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
+    async (params) => {
       const browserState = getBrowserState();
-      return await browserState.goForward(context.tabId);
+      return await browserState.goForward(params.tabId);
     }
   ]
 };

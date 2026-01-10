@@ -94,22 +94,32 @@ function extractLinks(elementIdCounter) {
   return Array.from(linkMap.values());
 }
 
-// Extract buttons with metadata
+// Extract buttons with metadata (deduplicated)
 function extractButtons(elementIdCounter) {
-  return Array.from(document.querySelectorAll('button')).map(b => {
-    const id = elementIdCounter.value++;
-    b.setAttribute('data-vish-id', id);
-    const btnObj = { id };
+  const buttonMap = new Map();
+
+  Array.from(document.querySelectorAll('button')).forEach(b => {
     const text = cleanField(b.innerText);
     const elemId = cleanField(b.id);
     const className = cleanField(b.className);
 
-    if (text) btnObj.text = text;
-    if (elemId) btnObj.elementId = elemId;
-    if (className) btnObj.class = className;
+    // Create unique key from button properties
+    const key = elemId || `${text || ''}|${className || ''}`;
 
-    return btnObj;
+    if (!buttonMap.has(key)) {
+      const id = elementIdCounter.value++;
+      b.setAttribute('data-vish-id', id);
+      const btnObj = { id };
+
+      if (text) btnObj.text = text;
+      if (elemId) btnObj.elementId = elemId;
+      if (className) btnObj.class = className;
+
+      buttonMap.set(key, btnObj);
+    }
   });
+
+  return Array.from(buttonMap.values());
 }
 
 // Extract inputs with metadata

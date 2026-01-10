@@ -50,22 +50,33 @@ class Logger {
 
   async writeToStorage(entry) {
     const location = entry.location || 'unknown';
-    const logLine = `${entry.message}${entry.data ? ` | ${JSON.stringify(entry.data)}` : ''}`;
-    const fileLogLine = `[${entry.timestamp}] ${this.getLevelString(entry.level)} - [${location}] ${logLine}`;
+    const prefix = `[${entry.timestamp}] ${this.getLevelString(entry.level)} - [${location}]`;
 
-    // Store in memory
-    this.logs.push(fileLogLine);
+    // For storage: compact single-line format
+    const compactLogLine = `${prefix} ${entry.message}${entry.data ? ` | ${JSON.stringify(entry.data)}` : ''}`;
+
+    // Store in memory (compact format)
+    this.logs.push(compactLogLine);
 
     // Keep only recent logs in memory
     if (this.logs.length > this.maxLogsInMemory) {
       this.logs = this.logs.slice(-this.maxLogsInMemory);
     }
 
-    // Output to console with truncation
+    // Output to console with pretty-printed JSON for readability
+    let consoleOutput;
+    if (entry.data) {
+      const prettyData = JSON.stringify(entry.data, null, 2);
+      consoleOutput = `${prefix} ${entry.message}\n${prettyData}`;
+    } else {
+      consoleOutput = `${prefix} ${entry.message}`;
+    }
+
+    // Truncate if too long
     const maxLength = 50000;
-    const consoleOutput = fileLogLine.length > maxLength
-      ? `${fileLogLine.substring(0, maxLength / 2)}...${fileLogLine.substring(fileLogLine.length - maxLength / 2)}`
-      : fileLogLine;
+    if (consoleOutput.length > maxLength) {
+      consoleOutput = `${consoleOutput.substring(0, maxLength / 2)}...${consoleOutput.substring(consoleOutput.length - maxLength / 2)}`;
+    }
     console.log(consoleOutput);
 
     // Store to chrome.storage.local (async, non-blocking)

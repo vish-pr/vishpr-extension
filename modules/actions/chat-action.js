@@ -1,9 +1,9 @@
 /**
  * Chat action - the stop action that generates final responses
+ * Note: Browser state is injected by the executor, not here
  */
 
 import { generate } from '../llm.js';
-import { getBrowserStateBundle } from '../browser-state.js';
 
 /**
  * Action name constant
@@ -25,13 +25,13 @@ export const chatAction = {
         type: 'string',
         description: 'Original user message'
       },
+      tabId: {
+        type: 'number',
+        description: 'Tab ID to get page content from'
+      },
       justification: {
         type: 'string',
         description: 'Why responding now (e.g., task complete, need clarification, error occurred)'
-      },
-      page_content: {
-        type: 'string',
-        description: 'Page content if extracted (can be any type)',
       },
       page_url: {
         type: 'string',
@@ -42,7 +42,7 @@ export const chatAction = {
         description: 'Any additional notes or context'
       }
     },
-    required: ['user_message', 'page_content'],
+    required: ['user_message'],
     additionalProperties: false
   },
   output_schema: {
@@ -54,14 +54,14 @@ export const chatAction = {
     additionalProperties: false
   },
   steps: [
-    async (context) => {
-      // Get browser state
-      const { formatted: browserStateFormatted, json: browserStateJSON } = getBrowserStateBundle();
+    async (params, prevResult, browser) => {
+      // Browser state is passed in by executor
+      const page_content = browser?.json?.tabs?.[params.tabId]?.content || params.page_content;
 
       // Build a summary of actions taken
-      const actionsSummary = buildActionsSummary(context);
+      const actionsSummary = buildActionsSummary(params);
 
-      // Build system prompt for response generation with browser state
+      // Build system prompt for response generation
       const systemPrompt = `You are a helpful browser automation assistant. The user asked you to perform a task, and you've completed some actions.
 
 Your job is to:
@@ -71,55 +71,38 @@ Your job is to:
 4. Be concise but informative
 
 Context available to you:
-- Original user request: ${context.user_message}
-- Current page URL: ${context.page_url || 'unknown'}
+- Original user request: ${params.user_message}
+- Current page URL: ${params.page_url || 'unknown'}
 - Actions performed: ${actionsSummary}
-${context.note ? `- Note: ${context.note}` : ''}
-
-Browser State:
-${browserStateFormatted}
+${params.note ? `- Note: ${params.note}` : ''}
 
 If page content was extracted, include relevant excerpts in your response.
 If you clicked something or filled a form, confirm what you did.
 If navigation occurred, mention where you went.
 Be natural and conversational.`;
 
-      // Build user prompt with context
-      let userPrompt = `Generate a response for the user.\n\nOriginal request: "${context.user_message}"`;
+      // Build user prompt
+      let userPrompt = `Generate a response for the user.\n\nOriginal request: "${params.user_message}"`;
 
-      if (context.page_content) {
+      if (page_content) {
         userPrompt += `\n\nPage content summary:`;
-        userPrompt += `\n- Title: ${context.page_content.title}`;
-        if (context.page_content.text) {
-          userPrompt += `\n- Text preview: ${context.page_content.text.substring(0, 500)}...`;
+        userPrompt += `\n- Title: ${page_content.title}`;
+        if (page_content.text) {
+          userPrompt += `\n- Text preview: ${page_content.text.substring(0, 500)}...`;
         }
-        if (context.page_content.links?.length) {
-          userPrompt += `\n- Links found: ${context.page_content.links.length}`;
+        if (page_content.links?.length) {
+          userPrompt += `\n- Links found: ${page_content.links.length}`;
         }
-        if (context.page_content.buttons?.length) {
-          userPrompt += `\n- Interactive buttons: ${context.page_content.buttons.length}`;
-        }
-      }
-
-      if (context.clicked) {
-        userPrompt += `\n\nAction performed: Clicked element with selector "${context.selector}"`;
-      }
-
-      if (context.filled_fields) {
-        userPrompt += `\n\nAction performed: Filled ${context.filled_fields} form fields`;
-        if (context.submitted) {
-          userPrompt += ` and submitted the form`;
+        if (page_content.buttons?.length) {
+          userPrompt += `\n- Interactive buttons: ${page_content.buttons.length}`;
         }
       }
 
-      if (context.navigated) {
-        userPrompt += `\n\nAction performed: Navigated to ${context.new_url || 'new page'}`;
+      if (params.justification) {
+        userPrompt += `\n\nReason for responding: ${params.justification}`;
       }
 
-      if (context.scrolled) {
-        userPrompt += `\n\nAction performed: Scrolled page (${context.scrolled_pixels} pixels)`;
-      }
-
+      // Note: Browser state is injected as second-to-last message by executor
       // Generate response using LLM
       const result = await generate({
         messages: [
@@ -144,44 +127,17 @@ Be natural and conversational.`;
         }
       });
 
-      // Add browser state to the result
-      return {
-        ...result,
-        browser_state: browserStateJSON
-      };
+      return result;
     }
   ]
 };
 
 /**
  * Helper to build a summary of actions taken
- * @param {Object} context - Execution context
+ * @param {Object} params - Input params
  * @returns {string} Summary of actions
  */
-function buildActionsSummary(context) {
-  const actions = [];
-
-  if (context.page_content) {
-    actions.push('read page content');
-  }
-  if (context.clicked) {
-    actions.push('clicked element');
-  }
-  if (context.filled_fields) {
-    actions.push(`filled ${context.filled_fields} form fields`);
-  }
-  if (context.submitted) {
-    actions.push('submitted form');
-  }
-  if (context.navigated) {
-    actions.push('navigated to new URL');
-  }
-  if (context.scrolled) {
-    actions.push('scrolled page');
-  }
-  if (context.selected) {
-    actions.push('selected dropdown option');
-  }
-
-  return actions.length > 0 ? actions.join(', ') : 'no actions yet';
+function buildActionsSummary(params) {
+  // Use justification as summary since we no longer accumulate action results
+  return params.justification || 'responding to user';
 }
