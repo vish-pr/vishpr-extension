@@ -24,5 +24,17 @@ export const elements = {
   modelListHigh: document.getElementById('modelListHigh'),
   modelListMedium: document.getElementById('modelListMedium'),
   modelListLow: document.getElementById('modelListLow'),
-  resetModelsBtn: document.getElementById('resetModelsBtn')
+  resetModelsBtn: document.getElementById('resetModelsBtn'),
+
+  // Settings tabs
+  settingsModelsTab: document.getElementById('settingsModelsTab'),
+  settingsUiTab: document.getElementById('settingsUiTab'),
+
+  // UI settings
+  themeSelector: document.getElementById('themeSelector'),
+  zoomIn: document.getElementById('zoomIn'),
+  zoomOut: document.getElementById('zoomOut'),
+  zoomLevel: document.getElementById('zoomLevel'),
+  zoomSlider: document.getElementById('zoomSlider'),
+  resetUiBtn: document.getElementById('resetUiBtn')
 };

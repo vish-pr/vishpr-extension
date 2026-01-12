@@ -40,50 +40,106 @@
   <!-- Settings Panel -->
   <div class="hidden bg-base-200 border-b border-base-content/10 overflow-hidden" id="settingsPanel">
     <div class="p-4 space-y-4">
-      <label class="form-control w-full">
-        <div class="label"><span class="label-text text-xs font-medium opacity-70">OpenRouter API Key</span></div>
-        <div class="relative">
-          <input type="password" id="openrouterApiKey" class="input input-bordered w-full pr-10" placeholder="sk-or-...">
-          <span id="openrouterApiKeyStatus" class="absolute right-3 top-1/2 -translate-y-1/2 text-sm"></span>
-        </div>
-      </label>
-      <div class="alert bg-base-content/5 text-sm">
-        Get your API key from <a href="https://openrouter.ai/keys" target="_blank" class="link link-primary">openrouter.ai/keys</a>
+      <!-- Settings Tabs -->
+      <div role="tablist" class="tabs tabs-boxed bg-base-300 settings-tabs">
+        <button role="tab" class="tab tab-active text-xs font-medium" data-settings-tab="models">
+          <svg class="w-3.5 h-3.5 mr-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+          </svg>
+          Models
+        </button>
+        <button role="tab" class="tab text-xs font-medium" data-settings-tab="ui">
+          <svg class="w-3.5 h-3.5 mr-1.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
+          </svg>
+          Interface
+        </button>
       </div>
 
-      <!-- Model Configuration -->
-      <div class="divider text-xs opacity-50 my-2">Models</div>
-      <div id="modelsBody" class="space-y-3">
-        <div class="tier-section" data-tier="HIGH">
-          <div class="flex items-center justify-between mb-2">
-            <span class="badge badge-error badge-sm font-semibold">HIGH</span>
-            <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="HIGH" title="Add model">
-              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
+      <!-- Models Tab Content -->
+      <div id="settingsModelsTab" class="settings-tab-content">
+        <label class="form-control w-full mb-3">
+          <div class="label"><span class="label-text text-xs font-medium opacity-70">OpenRouter API Key</span></div>
+          <label class="input input-bordered flex items-center gap-2">
+            <input type="password" id="openrouterApiKey" class="grow" placeholder="sk-or-...">
+            <span id="openrouterApiKeyStatus" class="text-sm"></span>
+          </label>
+        </label>
+        <div class="text-xs opacity-60 mb-3">Get key from <a href="https://openrouter.ai/keys" target="_blank" class="link link-primary">openrouter.ai/keys</a></div>
+
+        <div id="modelsBody" class="space-y-3">
+          <div class="tier-section" data-tier="HIGH">
+            <div class="flex items-center justify-between mb-2">
+              <span class="badge badge-error badge-sm">HIGH</span>
+              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="HIGH" title="Add model">+</button>
+            </div>
+            <ul class="list bg-base-300 rounded-lg min-h-10" id="modelListHigh"></ul>
           </div>
-          <ul class="list bg-base-300 rounded-lg min-h-[40px] transition-colors" id="modelListHigh"></ul>
+          <div class="tier-section" data-tier="MEDIUM">
+            <div class="flex items-center justify-between mb-2">
+              <span class="badge badge-warning badge-sm">MEDIUM</span>
+              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="MEDIUM" title="Add model">+</button>
+            </div>
+            <ul class="list bg-base-300 rounded-lg min-h-10" id="modelListMedium"></ul>
+          </div>
+          <div class="tier-section" data-tier="LOW">
+            <div class="flex items-center justify-between mb-2">
+              <span class="badge badge-success badge-sm">LOW</span>
+              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="LOW" title="Add model">+</button>
+            </div>
+            <ul class="list bg-base-300 rounded-lg min-h-10" id="modelListLow"></ul>
+          </div>
         </div>
-        <div class="tier-section" data-tier="MEDIUM">
-          <div class="flex items-center justify-between mb-2">
-            <span class="badge badge-warning badge-sm font-semibold">MEDIUM</span>
-            <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="MEDIUM" title="Add model">
-              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-          </div>
-          <ul class="list bg-base-300 rounded-lg min-h-[40px] transition-colors" id="modelListMedium"></ul>
-        </div>
-        <div class="tier-section" data-tier="LOW">
-          <div class="flex items-center justify-between mb-2">
-            <span class="badge badge-success badge-sm font-semibold">LOW</span>
-            <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="LOW" title="Add model">
-              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-          </div>
-          <ul class="list bg-base-300 rounded-lg min-h-[40px] transition-colors" id="modelListLow"></ul>
+        <div class="flex justify-end pt-2 border-t border-base-content/10">
+          <button class="btn btn-ghost btn-sm" id="resetModelsBtn">Reset to Defaults</button>
         </div>
       </div>
-      <div class="flex justify-end pt-2 border-t border-base-content/10">
-        <button class="btn btn-ghost btn-sm" id="resetModelsBtn">Reset to Defaults</button>
+
+      <!-- UI Tab Content -->
+      <div id="settingsUiTab" class="settings-tab-content hidden">
+        <!-- Theme Selection -->
+        <div class="ui-control-card bg-base-300 rounded-xl p-4 mb-3">
+          <div class="text-sm font-medium mb-3">Theme</div>
+          <div id="themeSelector" class="grid grid-cols-4 gap-2">
+            <button class="theme-btn flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 border-transparent" data-theme="cupcake">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-pink-200 to-pink-100 border-2 border-pink-300"></div>
+              <span class="text-[10px] opacity-70">Cupcake</span>
+            </button>
+            <button class="theme-btn flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 border-transparent" data-theme="retro">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-amber-200 to-orange-200 border-2 border-amber-400"></div>
+              <span class="text-[10px] opacity-70">Retro</span>
+            </button>
+            <button class="theme-btn flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 border-transparent" data-theme="sunset">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-rose-500 border-2 border-orange-500"></div>
+              <span class="text-[10px] opacity-70">Sunset</span>
+            </button>
+            <button class="theme-btn flex flex-col items-center gap-1.5 p-2 rounded-lg border-2 border-transparent" data-theme="night">
+              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-slate-700 to-slate-900 border-2 border-indigo-500"></div>
+              <span class="text-[10px] opacity-70">Night</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Zoom Controls -->
+        <div class="ui-control-card bg-base-300 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-sm font-medium">Zoom</div>
+            <div class="flex items-center gap-1">
+              <button id="zoomOut" class="btn btn-ghost btn-sm btn-square zoom-btn" title="Zoom out">−</button>
+              <span id="zoomLevel" class="zoom-level-display text-sm font-mono min-w-14 text-center">100%</span>
+              <button id="zoomIn" class="btn btn-ghost btn-sm btn-square zoom-btn" title="Zoom in">+</button>
+            </div>
+          </div>
+          <input type="range" id="zoomSlider" min="75" max="150" value="100" step="5" class="range range-xs range-primary w-full">
+          <div class="flex justify-between text-[10px] opacity-40 mt-1">
+            <span>75%</span>
+            <span>150%</span>
+          </div>
+        </div>
+
+        <div class="flex justify-end pt-3">
+          <button class="btn btn-ghost btn-sm" id="resetUiBtn">Reset to Defaults</button>
+        </div>
       </div>
     </div>
   </div>

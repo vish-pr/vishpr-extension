@@ -111,7 +111,6 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
     { role: 'system', content: systemPrompt },
     { role: 'user', content: initialMessage }
   ];
-  const fullHistory = [];
   const tools = buildTools(available_actions);
 
   for (let i = 0; i < max_iterations; i++) {
@@ -127,11 +126,8 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
       LLM_TIMEOUT_MS
     );
 
-    // Handle tool calls response
     if (!llmResponse.tool_calls?.length) {
-      // No tool call - model returned content directly
-      logger.warn('LLM returned content instead of tool call', { content: llmResponse.content });
-      return executeAction(actionsRegistry[stop_action], { response: llmResponse.content || 'No response' });
+      throw new Error('LLM did not return expected tool call');
     }
 
     const toolCall = llmResponse.tool_calls[0];
@@ -147,14 +143,6 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
       tool_calls: llmResponse.tool_calls
     });
 
-    fullHistory.push({
-      turn: i + 1,
-      action: toolName,
-      params: toolArgs,
-      tool_call_id: toolCall.id,
-      timestamp: new Date().toISOString()
-    });
-
     const targetAction = actionsRegistry[toolName];
     if (!targetAction) {
       // Tool not found - send error as tool response
@@ -168,14 +156,12 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
 
     const actionParams = pickParams(toolArgs, targetAction);
     if (toolName === stop_action) {
-      actionParams.conversation_history = formatConversationHistory(fullHistory);
+      actionParams.conversation_history = formatConversationHistory(conversation);
     }
 
     try {
       const result = await executeAction(targetAction, actionParams);
       if (toolName === stop_action) return result;
-
-      fullHistory[fullHistory.length - 1].result = result;
 
       // Send result as tool response
       conversation.push({
@@ -189,7 +175,6 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
         : { error: error.message };
 
       logger.warn(`${toolName} failed`, errorContent);
-      fullHistory[fullHistory.length - 1].error = error.message;
 
       // Send error as tool response
       conversation.push({
@@ -205,8 +190,28 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
     }
   }
 
-  logger.warn('Max iterations reached');
-  return executeAction(actionsRegistry[stop_action], { response: 'Unable to complete within allowed iterations.' });
+  logger.error('Max iterations reached, invoking stop action');
+
+  const syntheticToolCallId = `max-iter-${Date.now()}`;
+  const stopResponse = 'I was unable to complete the task within the allowed number of steps. Here is what I accomplished so far.';
+
+  conversation.push({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{
+      id: syntheticToolCallId,
+      type: 'function',
+      function: {
+        name: stop_action,
+        arguments: JSON.stringify({ response: stopResponse, justification: 'Maximum iterations reached' })
+      }
+    }]
+  });
+
+  return executeAction(actionsRegistry[stop_action], {
+    response: stopResponse,
+    conversation_history: formatConversationHistory(conversation)
+  });
 }
 
 function pickParams(source, actionDef) {
@@ -216,18 +221,34 @@ function pickParams(source, actionDef) {
   );
 }
 
-function formatConversationHistory(history) {
-  if (!history?.length) return 'No previous actions in this conversation.';
-  return history.map(e => {
-    let line = `Turn ${e.turn}: ${e.action}`;
-    if (e.params?.instructions) line += `\n  Instructions: ${e.params.instructions}`;
-    if (e.result) {
-      const str = typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2);
-      line += `\n  Result: ${str.length > 500 ? str.substring(0, 500) + '...' : str}`;
+function formatConversationHistory(conversation) {
+  const lines = [];
+  let turn = 0;
+
+  for (let i = 0; i < conversation.length; i++) {
+    const msg = conversation[i];
+    if (msg.role !== 'assistant' || !msg.tool_calls?.length) continue;
+
+    const toolCall = msg.tool_calls[0];
+    const action = toolCall.function.name;
+    const params = JSON.parse(toolCall.function.arguments || '{}');
+    turn++;
+
+    let line = `Turn ${turn}: ${action}`;
+    if (params.instructions) line += `\n  Instructions: ${params.instructions}`;
+
+    // Find corresponding tool response
+    const toolResponse = conversation[i + 1];
+    if (toolResponse?.role === 'tool') {
+      const content = toolResponse.content;
+      const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
+      line += `\n  Result: ${truncated}`;
     }
-    if (e.error) line += `\n  Error: ${e.error}`;
-    return line;
-  }).join('\n\n');
+
+    lines.push(line);
+  }
+
+  return lines.length ? lines.join('\n\n') : 'No previous actions in this conversation.';
 }
 
 async function insertBrowserState(conversation) {

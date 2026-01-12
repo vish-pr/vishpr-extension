@@ -78,10 +78,21 @@ export function addMessage(role, content, { timeout = null } = {}) {
   }
 
   const messageDiv = document.createElement('div');
-  messageDiv.className = `chat ${role === 'user' ? 'chat-end' : 'chat-start'} message`;
+  const isUser = role === 'user';
+  const isError = role === 'error';
+  messageDiv.className = `chat ${isUser ? 'chat-end' : 'chat-start'} message`;
+
   const bubbleDiv = document.createElement('div');
-  bubbleDiv.className = `chat-bubble ${role === 'user' ? 'chat-bubble-primary' : ''} text-sm`;
-  bubbleDiv.innerHTML = renderMarkdown(content);
+  if (isError) {
+    bubbleDiv.className = 'chat-bubble chat-bubble-error text-sm';
+    const errorSpan = document.createElement('span');
+    errorSpan.className = 'error-content';
+    errorSpan.textContent = content;
+    bubbleDiv.appendChild(errorSpan);
+  } else {
+    bubbleDiv.className = `chat-bubble ${isUser ? 'chat-bubble-primary' : ''} text-sm`;
+    bubbleDiv.innerHTML = renderMarkdown(content);
+  }
   messageDiv.appendChild(bubbleDiv);
 
   elements.chatContainer.appendChild(messageDiv);
@@ -146,13 +157,13 @@ async function sendMessage() {
     removeTypingIndicator();
 
     if (response.error) {
-      addMessage('system', `Error: ${response.error}`);
+      addMessage('error', response.error);
     } else {
       addMessage('assistant', response.result);
     }
   } catch (error) {
     removeTypingIndicator();
-    addMessage('system', `Error: ${error.message}`);
+    addMessage('error', error.message);
   } finally {
     elements.sendButton.disabled = false;
     await setStatus('Ready', false);

@@ -674,7 +674,7 @@ const BROWSER_ACTION_SYSTEM_PROMPT = `You are a browser automation assistant. Ex
 
 **Element IDs:** READ_PAGE assigns numeric IDs to elements. Use these IDs (not CSS selectors) for CLICK_ELEMENT, FILL_FORM, etc.
 
-Always call a tool. Never explain what you would do - just do it.`;
+Always call a tool.`;
 
 /**
  * Browser action router (Tier-2)

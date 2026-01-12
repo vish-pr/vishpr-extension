@@ -9,14 +9,12 @@ const DEFAULT_MODELS = {
   LOW: [['google/gemini-2.5-flash-lite', ['google-ai-studio']], ['qwen/qwen3-32b', ['Cerebras']]]
 };
 
-let apiKey = null, models = null;
+let apiKey = null;
 const modelFailures = new Map();
 let cachedModels = null, modelsTime = 0, cachedProviders = null, providersTime = 0;
 
 async function loadModels() {
-  if (models) return models;
-  models = (await chrome.storage.local.get(['llmModels'])).llmModels || DEFAULT_MODELS;
-  return models;
+  return (await chrome.storage.local.get(['llmModels'])).llmModels || DEFAULT_MODELS;
 }
 
 async function getCascadingModels(intelligence) {
@@ -38,8 +36,9 @@ function recordFailure(model) {
 }
 
 async function callAPI(model, messages, tools, only) {
-  const request = { model, messages, tools };
+  const request = { model, messages, tools, tool_choice: 'required' };
   if (only?.length) request.provider = { only };
+  logger.debug(`LLM Request Details`, { request });
   const response = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'X-Title': SITE_NAME },
@@ -64,8 +63,7 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools }) {
   for (const { model, only } of cascadingModels) {
     if (shouldSkip(model)) continue;
     try {
-      logger.info(`LLM Request: ${model}`, { messageCount: messages.length, toolCount: tools.length });
-      logger.debug(`LLM Request Details`, { model, intelligence, providers: only, messages, tools });
+      logger.info(`LLM Request: ${model}`, { messageCount: messages.length, intelligence, toolCount: tools.length });
       const result = await callAPI(model, messages, tools, only);
       if (result.tool_calls?.length && !result.tool_calls[0].function?.name) throw new Error('Invalid tool call: missing function name');
       logger.info(`LLM Response: ${model}`);
@@ -96,7 +94,7 @@ export async function verifyApiKey(key) {
 }
 
 export async function getModels() { return loadModels(); }
-export async function setModels(m) { models = m; await chrome.storage.local.set({ llmModels: m }); modelFailures.clear(); }
+export async function setModels(m) { await chrome.storage.local.set({ llmModels: m }); modelFailures.clear(); }
 export function getDefaultModels() { return JSON.parse(JSON.stringify(DEFAULT_MODELS)); }
 
 export async function fetchAvailableModels() {

@@ -20,7 +20,7 @@ const TIER1_SYSTEM_PROMPT = `You are a browser automation assistant. Execute the
 **Decision Guide:**
 {{decision_guide}}
 
-IMPORTANT: Always call a tool. Never explain which tool you would use - just use it.`;
+IMPORTANT: Always call a tool.`;
 
 /**
  * BROWSER_ROUTER action (Tier-1)
