@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Browser extension that uses LLMs to automate web browsing tasks through natural language commands",
   "icons": {
-    "128": "icon.png"
+    "128": "icon-128.png"
   },
   "background": {
     "service_worker": "background.js",
@@ -32,6 +32,7 @@
     "<all_urls>"
   ],
   "action": {
-    "default_title": "Open VishPro Agent"
+    "default_title": "Open VishPro Agent",
+    "default_icon": "icon-128.png"
   }
 }

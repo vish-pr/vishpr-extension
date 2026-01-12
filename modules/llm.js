@@ -64,16 +64,18 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools }) {
   for (const { model, only } of cascadingModels) {
     if (shouldSkip(model)) continue;
     try {
-      logger.info(`LLM Call: ${model}`, { messageCount: messages.length, toolCount: tools.length });
+      logger.info(`LLM Request: ${model}`, { messageCount: messages.length, toolCount: tools.length });
+      logger.debug(`LLM Request Details`, { model, intelligence, providers: only, messages, tools });
       const result = await callAPI(model, messages, tools, only);
       if (result.tool_calls?.length && !result.tool_calls[0].function?.name) throw new Error('Invalid tool call: missing function name');
-      logger.info(`LLM Success: ${model}`);
+      logger.info(`LLM Response: ${model}`);
+      logger.debug(`LLM Response Details`, { model, response: result });
       modelFailures.delete(model);
       return result;
     } catch (error) {
       lastError = error;
       recordFailure(model);
-      logger.warn(`LLM Failure: ${model}`, { error: error.message });
+      logger.warn(`LLM Failure: ${model}`, { model, error: error.message });
     }
   }
   throw new Error(`All models failed. Last error: ${lastError?.message || 'Unknown'}`);

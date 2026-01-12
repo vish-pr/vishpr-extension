@@ -28,7 +28,8 @@ class Logger {
     const logLine = `${prefix} ${message}${data ? ` | ${JSON.stringify(data)}` : ''}`;
     let output = data ? `${prefix} ${message}\n${JSON.stringify(data, null, 2)}` : `${prefix} ${message}`;
     if (output.length > 50000) output = output.substring(0, 25000) + '...' + output.substring(output.length - 25000);
-    console.log(output);
+    const consoleMethods = [console.debug, console.info, console.warn, console.error];
+    consoleMethods[level](output);
     try {
       const result = await chrome.storage.local.get([this.storageKey]);
       const logs = result[this.storageKey] || [];

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prebuild": "rm -rf dist && mkdir -p dist && cp manifest.json icon.png icon.svg sidepanel.html dist/",
+    "prebuild": "rm -rf dist && mkdir -p dist && cp manifest.json icon-128.png sidepanel.html dist/",
     "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
     "build:css": "tailwindcss -i ./input.css -o ./dist/styles.css --minify",
     "prewatch": "npm run prebuild",
