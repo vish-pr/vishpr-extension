@@ -1,5 +1,5 @@
 // Background Service Worker
-import { verifyApiKey as llmVerifyApiKey, isInitialized } from './modules/llm.js';
+import { verifyApiKey as llmVerifyApiKey, isInitialized } from './modules/llm/index.js';
 import { executeAction } from './modules/executor.js';
 import { getAction, BROWSER_ROUTER } from './modules/actions/index.js';
 import logger from './modules/logger.js';
@@ -42,9 +42,9 @@ async function handleUserMessage({ message }) {
   logger.info('Handling User Message', { userMessage: message });
 
   try {
-    // Check if OpenRouter is initialized
+    // Check if any endpoint is configured
     if (!(await isInitialized())) {
-      throw new Error('OpenRouter API key not configured. Please add your API key in settings.');
+      throw new Error('No LLM endpoints configured. Please configure an endpoint in settings.');
     }
 
     const action = getAction(BROWSER_ROUTER);
@@ -62,15 +62,10 @@ async function handleUserMessage({ message }) {
   }
 }
 
-// Verify API key using OpenRouter client
+// Verify API key
 async function verifyApiKey(apiKey) {
   try {
-    const valid = await llmVerifyApiKey(apiKey);
-    if (valid) {
-      return { valid: true };
-    } else {
-      return { valid: false, error: 'Invalid API key' };
-    }
+    return await llmVerifyApiKey(apiKey);
   } catch (error) {
     return { valid: false, error: error.message };
   }

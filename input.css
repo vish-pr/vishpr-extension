@@ -24,6 +24,12 @@ body { @apply flex flex-col; }
 .status-success { background: var(--color-status-active); }
 .status-error { background: var(--color-status-error); }
 .status.active { background: var(--color-status-active); }
+.status-verifying { animation: statusPulse 1s ease-in-out infinite; }
+.status-idle { background: oklch(var(--bc) / 0.15); }
+@keyframes statusPulse {
+  0%, 100% { background: oklch(0.6 0.15 85); opacity: 0.4; }
+  50% { background: oklch(0.75 0.18 85); opacity: 1; }
+}
 
 /* Chat animations */
 @keyframes msgIn {
@@ -33,7 +39,11 @@ body { @apply flex flex-col; }
 .message { animation: msgIn 0.2s ease; }
 
 /* Drag and drop */
-.drag-handle { @apply cursor-grab; &:active { @apply cursor-grabbing; } }
+.model-draggable {
+  @apply cursor-grab transition-colors;
+  &:hover { background: oklch(var(--bc) / 0.04); }
+  &:active { @apply cursor-grabbing; }
+}
 .sortable-ghost { @apply opacity-50; }
 .sortable-chosen { background: oklch(var(--b3)); }
 .sortable-drag { box-shadow: 0 0.25rem 0.75rem oklch(0 0 0 / 0.3); }
@@ -109,6 +119,11 @@ body { @apply flex flex-col; }
   @apply gap-0;
   svg { @apply opacity-50; }
   &.tab-active svg { @apply opacity-100; }
+}
+
+/* Model autocomplete dropdown - fixed position to escape overflow container */
+#modelsBody .dropdown-content {
+  @apply z-[9999] fixed;
 }
 
 /* Stats summary gradient */

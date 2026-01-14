@@ -4,7 +4,7 @@
 import Mustache from 'mustache';
 import logger from './logger.js';
 import { getBrowserStateBundle } from './browser-state.js';
-import { generate } from './llm.js';
+import { generate } from './llm/index.js';
 import { actionsRegistry } from './actions/index.js';
 
 const STEP_TIMEOUT_MS = 20000;

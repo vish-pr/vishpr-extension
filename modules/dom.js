@@ -15,9 +15,9 @@ export const elements = {
   actionsTabContent: document.getElementById('actionsTabContent'),
   extractionTabs: document.querySelectorAll('#extractionPanel [role="tablist"] .tab'),
 
-  // OpenRouter settings
-  openrouterApiKey: document.getElementById('openrouterApiKey'),
-  openrouterApiKeyStatus: document.getElementById('openrouterApiKeyStatus'),
+  // Endpoints
+  endpointsList: document.getElementById('endpointsList'),
+  addEndpointBtn: document.getElementById('addEndpointBtn'),
 
   // Model configuration
   modelsBody: document.getElementById('modelsBody'),

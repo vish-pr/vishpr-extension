@@ -83,16 +83,28 @@ export class TimeBucketCounter {
     return Object.fromEntries(await Promise.all(Object.keys(this.data).map(async key => [key, await this.getStats(key)])));
   }
 
-  async reset(key = null) {
+  async reset(key = null, types = null) {
     await this.load();
-    if (key) delete this.data[key]; else this.data = {};
+    if (key && types?.length) {
+      // Reset specific counter types for a key
+      if (this.data[key]) {
+        for (const type of types) delete this.data[key][type];
+        if (!Object.keys(this.data[key]).length) delete this.data[key];
+      }
+    } else if (key) {
+      delete this.data[key];
+    } else {
+      this.data = {};
+    }
     await this.save();
   }
 }
 
 let modelStatsCounter = null;
 
-export const modelStatsKey = (model, providers) => providers?.length ? `${model}@${providers.join(',')}` : model;
+export function modelStatsKey(endpoint, model, openrouterProvider) {
+  return `${endpoint}:${model}:${openrouterProvider || ''}`;
+}
 
 export function getModelStatsCounter() {
   return modelStatsCounter ??= new TimeBucketCounter('modelStatsV2', {
