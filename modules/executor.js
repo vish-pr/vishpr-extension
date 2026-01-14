@@ -1,11 +1,10 @@
 /**
  * Action executor - Params in, result out
  */
-import Mustache from 'mustache';
 import logger from './logger.js';
 import { getBrowserStateBundle } from './browser-state.js';
 import { generate } from './llm/index.js';
-import { actionsRegistry } from './actions/index.js';
+import { actionsRegistry, resolveStepTemplates } from './actions/index.js';
 
 const STEP_TIMEOUT_MS = 20000;
 const LLM_TIMEOUT_MS = 40000;
@@ -17,27 +16,6 @@ const TYPE_CHECKS = {
   array: v => Array.isArray(v),
   object: v => typeof v === 'object' && !Array.isArray(v)
 };
-
-async function resolveSystemPrompt(systemPrompt, context) {
-  if (typeof systemPrompt === 'string') return Mustache.render(systemPrompt, context);
-  if (systemPrompt && typeof systemPrompt === 'object') {
-    const result = await generate({
-      messages: [
-        { role: 'system', content: await resolveSystemPrompt(systemPrompt.system_prompt, context) },
-        { role: 'user', content: Mustache.render(systemPrompt.message, context) }
-      ],
-      intelligence: systemPrompt.intelligence,
-      schema: {
-        type: 'object',
-        properties: { system_description: { type: 'string', description: 'Generated system prompt' } },
-        required: ['system_description'],
-        additionalProperties: false
-      }
-    });
-    return result.system_description;
-  }
-  return String(systemPrompt);
-}
 
 function validateParams(params, schema) {
   const errors = [];
@@ -68,7 +46,7 @@ export async function executeAction(action, params = {}) {
   let result = null;
   for (let i = 0; i < action.steps.length; i++) {
     try {
-      result = await executeStep(action.steps[i], params, result);
+      result = await executeStep(action.steps[i], params, result, action);
     } catch (error) {
       logger.error(`Step ${i + 1} failed: ${action.name}`, { error: error.message });
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
@@ -78,30 +56,24 @@ export async function executeAction(action, params = {}) {
   return result;
 }
 
-async function executeStep(step, params, prevResult) {
+async function executeStep(step, params, prevResult, action) {
   if (typeof step === 'function') return withTimeout(step(params, prevResult), STEP_TIMEOUT_MS);
-  if (step.type === 'llm') return executeLLMStep(step, params, prevResult);
+  if (step.type === 'llm') return executeLLMStep(step, params, prevResult, action);
   throw new Error(`Unknown step type: ${JSON.stringify(step)}`);
 }
 
-async function executeLLMStep(step, params, prevResult = {}) {
-  const { system_prompt, message, intelligence, output_schema, tool_choice } = step;
-  const templateCtx = { ...params, ...prevResult };
+async function executeLLMStep(step, params, prevResult = {}, action) {
+  const { intelligence, output_schema, tool_choice } = step;
+  const context = { ...params, ...prevResult };
 
-  if (tool_choice?.available_actions) {
-    templateCtx.available_tools = buildToolDescriptions(tool_choice.available_actions, tool_choice.stop_action);
-    templateCtx.decision_guide = buildDecisionGuide(tool_choice.available_actions);
-  }
-
-  const resolvedSystemPrompt = await resolveSystemPrompt(system_prompt, templateCtx);
-  const resolvedMessage = Mustache.render(message, templateCtx);
+  const { systemPrompt, message } = resolveStepTemplates(step, action, context);
 
   if (!tool_choice) {
     return withTimeout(
       generate({
         messages: await insertBrowserState([
-          { role: 'system', content: resolvedSystemPrompt },
-          { role: 'user', content: resolvedMessage }
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: message }
         ]),
         intelligence,
         schema: output_schema
@@ -109,7 +81,7 @@ async function executeLLMStep(step, params, prevResult = {}) {
       LLM_TIMEOUT_MS
     );
   }
-  return executeMultiTurn(resolvedSystemPrompt, resolvedMessage, tool_choice, intelligence);
+  return executeMultiTurn(systemPrompt, message, tool_choice, intelligence);
 }
 
 async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligence) {
@@ -174,8 +146,6 @@ async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligen
         break; // Stop executing remaining tool calls on error
       }
     }
-
-    if (conversation.length > 12) conversation.splice(2, conversation.length - 10);
   }
 
   logger.error('Max iterations reached, invoking stop action');
@@ -224,21 +194,6 @@ function buildTools(availableActions) {
       }
     };
   }).filter(Boolean);
-}
-
-function buildToolDescriptions(actionNames, stopAction) {
-  return actionNames.map((name, i) => {
-    const action = actionsRegistry[name];
-    const required = action?.input_schema?.required?.length ? `\n   Requires: ${action.input_schema.required.join(', ')}` : '';
-    return `${i + 1}. **${name}**${name === stopAction ? ' [STOP]' : ''}: ${action.description}${required}`;
-  }).join('\n\n');
-}
-
-function buildDecisionGuide(actionNames) {
-  return actionNames.flatMap(name => {
-    const action = actionsRegistry[name];
-    return (action?.examples || []).map(ex => `- "${ex}" → ${name}`);
-  }).join('\n');
 }
 
 function unwrapStopResult(result) {
