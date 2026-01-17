@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vishpr Debug</title>
+  <link rel="stylesheet" href="devtools-panel.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="debug-panel">
+    <!-- Header -->
+    <header class="panel-header">
+      <div class="header-title">
+        <span class="logo-icon">&#9670;</span>
+        <h1>VISHPR DEBUG</h1>
+        <span class="status-indicator" id="statusIndicator" title="Disconnected"></span>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="clearHistoryBtn" title="Clear History">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="panel-content">
+      <!-- History Sidebar -->
+      <aside class="history-sidebar" id="historySidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">HISTORY</span>
+          <span class="history-count" id="historyCount">0</span>
+        </div>
+        <div class="history-list" id="historyList">
+          <div class="history-empty">
+            <span class="empty-icon">&#9711;</span>
+            <span>No runs yet</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Area -->
+      <main class="main-area">
+        <!-- Command Input -->
+        <div class="command-section">
+          <div class="command-input-wrapper">
+            <span class="command-prompt">&#9656;</span>
+            <input
+              type="text"
+              class="command-input"
+              id="commandInput"
+              placeholder="Type action name... (e.g., READ_PAGE)"
+              autocomplete="off"
+              spellcheck="false"
+            >
+            <button class="run-btn" id="runBtn" title="Run (Enter)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              RUN
+            </button>
+          </div>
+          <div class="autocomplete-dropdown" id="autocompleteDropdown"></div>
+          <div class="schema-hint" id="schemaHint"></div>
+        </div>
+
+        <!-- Trace Output -->
+        <div class="trace-section" id="traceSection">
+          <div class="trace-empty" id="traceEmpty">
+            <div class="empty-graphic">
+              <div class="empty-ring"></div>
+              <div class="empty-ring"></div>
+              <div class="empty-ring"></div>
+            </div>
+            <span class="empty-text">Run an action to see its trace</span>
+            <span class="empty-hint">Try: READ_PAGE, CLICK_ELEMENT, NAVIGATE_TO</span>
+          </div>
+          <div class="trace-tree" id="traceTree"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Footer Status Bar -->
+    <footer class="panel-footer">
+      <div class="footer-left">
+        <span class="tab-info" id="tabInfo">No tab selected</span>
+      </div>
+      <div class="footer-right">
+        <span class="timing-info" id="timingInfo"></span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="devtools-panel.js"></script>
+</body>
+</html>

@@ -1,16 +1,17 @@
 // Background Service Worker
 import { verifyApiKey as llmVerifyApiKey, isInitialized } from './modules/llm/index.js';
 import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
-import { getAction, BROWSER_ROUTER } from './modules/actions/index.js';
+import { getAction, BROWSER_ROUTER, actionsRegistry } from './modules/actions/index.js';
 import logger from './modules/logger.js';
 import { getChromeAPI } from './modules/chrome-api.js';
+import { TraceCollector } from './modules/trace-collector.js';
 
 // Enable side panel on extension icon click
 chrome.action.onClicked.addListener(async (tab) => {
   await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
-// Listen for messages from side panel
+// Listen for messages from side panel and DevTools
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'processMessage') {
     handleUserMessage(message)
@@ -34,6 +35,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         logger.error('API Key Verification Failed', { error: error.message });
         sendResponse({ valid: false, error: error.message });
       });
+    return true; // Keep channel open for async response
+  } else if (message.type === 'DEBUG_PING') {
+    // DevTools panel connection check
+    sendResponse({ connected: true });
+    return true;
+  } else if (message.type === 'DEBUG_EXECUTE') {
+    // Execute action with tracing for DevTools debug panel
+    handleDebugExecute(message)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ error: error.message }));
     return true; // Keep channel open for async response
   }
 });
@@ -69,6 +80,52 @@ async function verifyApiKey(apiKey) {
     return await llmVerifyApiKey(apiKey);
   } catch (error) {
     return { valid: false, error: error.message };
+  }
+}
+
+// Handle debug execution from DevTools panel
+async function handleDebugExecute({ actionName, params, runId }) {
+  logger.info('Debug Execute', { actionName, runId });
+
+  try {
+    // Check if LLM is initialized
+    if (!(await isInitialized())) {
+      throw new Error('No LLM endpoints configured. Please configure an endpoint in settings.');
+    }
+
+    // Get the action from registry
+    const action = actionsRegistry[actionName];
+    if (!action) {
+      throw new Error(`Unknown action: ${actionName}`);
+    }
+
+    // Create trace collector
+    const traceCollector = new TraceCollector(runId);
+
+    // Execute action with tracing
+    const result = await executeAction(action, params || {}, null, traceCollector);
+
+    // Get the complete trace
+    const trace = traceCollector.getTrace();
+
+    logger.info('Debug Execute Complete', { actionName, runId });
+
+    return {
+      result: result.result,
+      trace: trace,
+    };
+  } catch (error) {
+    logger.error('Debug Execute Failed', {
+      actionName,
+      runId,
+      error: error.message,
+      stack: error.stack
+    });
+
+    return {
+      error: error.message,
+      trace: null,
+    };
   }
 }
 
