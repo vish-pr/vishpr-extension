@@ -5,7 +5,7 @@ import { getModelStatsCounter } from './time-bucket-counter.js';
 
 const THEMES = ['cupcake', 'retro', 'sunset', 'night'];
 const DEFAULT_THEME = 'night';
-const ZOOM = { min: 75, max: 150, default: 100, step: 5 };
+const ZOOM = { min: 70, max: 150, default: 100, step: 10 };
 const STATS_WINDOW = 100;
 
 let currentTheme = DEFAULT_THEME;
@@ -72,6 +72,13 @@ function setupThemeSelector() {
       applyTheme(theme);
       saveSettings();
     }
+  });
+}
+
+function setupPositionSelector() {
+  // Open Chrome appearance settings where users can change side panel position
+  elements.openPositionSettings.addEventListener('click', () => {
+    chrome.tabs.create({ url: 'chrome://settings/appearance' });
   });
 }
 
@@ -214,6 +221,7 @@ export async function initUiSettings() {
   // Setup event listeners
   setupSettingsTabs();
   setupThemeSelector();
+  setupPositionSelector();
   setupZoomControls();
   setupResetButton();
 }

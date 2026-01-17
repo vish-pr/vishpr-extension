@@ -36,6 +36,7 @@ export const elements = {
 
   // UI settings
   themeSelector: document.getElementById('themeSelector'),
+  openPositionSettings: document.getElementById('openPositionSettings'),
   zoomIn: document.getElementById('zoomIn'),
   zoomOut: document.getElementById('zoomOut'),
   zoomLevel: document.getElementById('zoomLevel'),

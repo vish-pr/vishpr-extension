@@ -48,23 +48,45 @@ body { @apply flex flex-col; }
 .sortable-chosen { background: oklch(var(--b3)); }
 .sortable-drag { box-shadow: 0 0.25rem 0.75rem oklch(0 0 0 / 0.3); }
 
-/* Chat bubbles */
+/* Chat bubbles - symmetrical styling */
+.chat-bubble {
+  @apply rounded-2xl;
+}
+
+/* Assistant messages (chat-start) - visible background per theme */
 .chat-start .chat-bubble:not(.chat-bubble-error) {
-  background: oklch(var(--bc) / 0.06);
-  border: 1px solid oklch(var(--bc) / 0.08);
+  @apply text-base-content/80;
 }
 
-:is([data-theme="cupcake"], [data-theme="retro"]) .chat-start .chat-bubble:not(.chat-bubble-error) {
-  background: oklch(var(--b3));
-  border-color: oklch(var(--bc) / 0.1);
+/* Night theme - dark gray with slight blue tint */
+[data-theme="night"] .chat-start .chat-bubble:not(.chat-bubble-error) {
+  background: oklch(0.28 0.015 260);
 }
 
+/* Sunset theme - muted warm dark */
+[data-theme="sunset"] .chat-start .chat-bubble:not(.chat-bubble-error) {
+  background: oklch(0.30 0.02 50);
+}
+
+/* Cupcake theme - soft pink-tinted gray */
+[data-theme="cupcake"] .chat-start .chat-bubble:not(.chat-bubble-error) {
+  background: oklch(0.88 0.015 340);
+  @apply text-base-content/70;
+}
+
+/* Retro theme - warm sepia tone */
+[data-theme="retro"] .chat-start .chat-bubble:not(.chat-bubble-error) {
+  background: oklch(0.85 0.025 80);
+  @apply text-base-content/70;
+}
+
+/* Code in bubbles */
 .chat-bubble code {
   @apply px-1 py-px rounded font-mono;
-  background: oklch(0 0 0 / 0.2);
+  background: oklch(0 0 0 / 0.15);
   font-size: 0.85em;
 }
-.chat-bubble-primary code { background: oklch(1 0 0 / 0.2); }
+.chat-bubble-primary code { background: oklch(0 0 0 / 0.15); }
 .chat-start .chat-bubble:not(.chat-bubble-error) code { background: oklch(var(--bc) / 0.1); }
 
 /* Error messages */
@@ -136,3 +158,4 @@ body { @apply flex flex-col; }
   --thickness: 3px;
   background: oklch(var(--bc) / 0.08);
 }
+
