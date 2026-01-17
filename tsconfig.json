@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationDir": "./types",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "resolveJsonModule": true
+  },
+  "include": ["modules/**/*.ts", "types/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

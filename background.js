@@ -1,9 +1,9 @@
 // Background Service Worker
 import { verifyApiKey as llmVerifyApiKey, isInitialized } from './modules/llm/index.js';
-import { executeAction } from './modules/executor.js';
+import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
 import { getAction, BROWSER_ROUTER } from './modules/actions/index.js';
 import logger from './modules/logger.js';
-import { getBrowserState } from './modules/browser-state.js';
+import { getChromeAPI } from './modules/chrome-api.js';
 
 // Enable side panel on extension icon click
 chrome.action.onClicked.addListener(async (tab) => {
@@ -51,7 +51,8 @@ async function handleUserMessage({ message }) {
     logger.info('Executing action', { action: BROWSER_ROUTER });
     const result = await executeAction(action, { user_message: message });
     logger.info('Action completed');
-    return result;
+    // Unwrap final answer at top level for display to user
+    return unwrapFinalAnswer(result);
   } catch (error) {
     logger.error('Action execution error in background', {
       error: error.message,
@@ -72,30 +73,16 @@ async function verifyApiKey(apiKey) {
 }
 
 // ============================================
-// Browser State Management - Tab Lifecycle
+// Browser State Persistence
 // ============================================
+// Note: Tab lifecycle (onRemoved, onUpdated, onActivated) is handled
+// internally by chrome-api.js. Only persistence logic needed here.
 
-// Listen for tab removal to clean up browser state
-chrome.tabs.onRemoved.addListener((tabId) => {
-  const browserState = getBrowserState();
-  browserState.removeTab(tabId);
-  logger.info('Tab removed from browser state', { tabId });
-});
-
-// Listen for tab URL updates to keep browser state in sync
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url) {
-    const browserState = getBrowserState();
-    browserState.registerTab(tabId, changeInfo.url);
-    logger.info('Tab URL updated in browser state', { tabId, url: changeInfo.url });
-  }
-});
-
-// Optional: Persist browser state periodically
+// Persist browser state periodically
 setInterval(async () => {
   try {
-    const browserState = getBrowserState();
-    const stateJSON = browserState.toJSON();
+    const chromeAPI = getChromeAPI();
+    const stateJSON = chromeAPI.toJSON();
     await chrome.storage.local.set({ browserState: stateJSON });
     logger.debug('Browser state persisted to storage');
   } catch (error) {
@@ -106,11 +93,11 @@ setInterval(async () => {
 // Load browser state on extension startup
 chrome.runtime.onStartup.addListener(async () => {
   try {
-    const browserState = getBrowserState();
+    const chromeAPI = getChromeAPI();
     const result = await chrome.storage.local.get('browserState');
 
     if (result.browserState) {
-      browserState.fromJSON(result.browserState);
+      chromeAPI.fromJSON(result.browserState);
       logger.info('Browser state restored from storage');
     }
   } catch (error) {

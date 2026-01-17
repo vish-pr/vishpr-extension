@@ -2,6 +2,7 @@
  * LLM Models - Loading, cascading, defaults
  */
 
+import logger from '../logger.js';
 import { getModelStatsCounter, modelStatsKey } from '../time-bucket-counter.js';
 import { OPENROUTER_ID } from './endpoints.js';
 
@@ -58,6 +59,7 @@ export async function shouldSkip(endpoint, model, openrouterProvider) {
   if (errors === 0) return false;
   if (skips < errors) {
     await getModelStatsCounter().increment(key, 'skip');
+    logger.info(`Skipping ${model}`, { errors, skips });
     return true;
   }
   return false;

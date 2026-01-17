@@ -1,13 +1,13 @@
 /**
  * Action executor - Params in, result out
+ * Uses context accumulation: each step's result merges into context
  */
 import logger from './logger.js';
-import { getBrowserStateBundle } from './browser-state.js';
+import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
 import { actionsRegistry, resolveStepTemplates } from './actions/index.js';
 
-const STEP_TIMEOUT_MS = 20000;
-const LLM_TIMEOUT_MS = 40000;
+const TIMEOUT_MS = 20000;
 
 const TYPE_CHECKS = {
   string: v => typeof v === 'string',
@@ -30,8 +30,9 @@ function validateParams(params, schema) {
   return { valid: !errors.length, errors };
 }
 
-export async function executeAction(action, params = {}) {
-  logger.info(`Action: ${action.name}`, { params });
+
+export async function executeAction(action, params, parent_messages = null) {
+  logger.info(`Action: ${action.name}`, { params: Object.keys(params) });
 
   if (action.input_schema) {
     const { valid, errors } = validateParams(params, action.input_schema);
@@ -43,141 +44,107 @@ export async function executeAction(action, params = {}) {
     }
   }
 
-  let result = null;
+  let context = { ...params, parent_messages };
+  let lastStepOutput = {};
+
   for (let i = 0; i < action.steps.length; i++) {
+    const step = action.steps[i];
     try {
-      result = await executeStep(action.steps[i], params, result, action);
+      let stepOutput;
+      switch (step.type) {
+        case 'function': stepOutput = await withTimeout(step.handler(context), TIMEOUT_MS); break;
+        case 'llm': stepOutput = await executeLLMStep(step, context); break;
+        case 'action': stepOutput = await executeAction(actionsRegistry[step.action], context, context.parent_messages); break;
+        default: throw new Error(`Unknown step type: ${step.type}`);
+      }
+      if (stepOutput.result) {
+        lastStepOutput = stepOutput.result;
+        context = { ...context, ...lastStepOutput };
+      }
+      if (stepOutput.parent_messages) context.parent_messages = stepOutput.parent_messages;
     } catch (error) {
       logger.error(`Step ${i + 1} failed: ${action.name}`, { error: error.message });
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
     }
   }
+
   logger.info(`Action complete: ${action.name}`);
-  return result;
+
+  // Return last step output as result, pass through parent_messages if modified
+  return {
+    result: lastStepOutput,
+    ...(context.parent_messages && { parent_messages: context.parent_messages })
+  };
 }
 
-async function executeStep(step, params, prevResult, action) {
-  if (typeof step === 'function') return withTimeout(step(params, prevResult), STEP_TIMEOUT_MS);
-  if (step.type === 'llm') return executeLLMStep(step, params, prevResult, action);
-  throw new Error(`Unknown step type: ${JSON.stringify(step)}`);
-}
+async function executeLLMStep(step, parent_context) {
+  const { intelligence, output_schema, tool_choice, skip_if } = step;
+  const context = { ...parent_context, browser_state: await getBrowserStateBundle(), stop_action: tool_choice?.stop_action };
 
-async function executeLLMStep(step, params, prevResult = {}, action) {
-  const { intelligence, output_schema, tool_choice } = step;
-  const browser_state = await getBrowserStateBundle();
-  const context = { ...params, ...prevResult, browser_state, stop_action: tool_choice?.stop_action };
-
-  const { systemPrompt, renderMessage } = resolveStepTemplates(step, action);
-  const message = renderMessage(context);
-  const resolvedSystemPrompt = typeof systemPrompt === 'function' ? systemPrompt(context) : systemPrompt;
-
-  if (!tool_choice) {
-    return withTimeout(
-      generate({
-        messages: [
-          { role: 'system', content: resolvedSystemPrompt },
-          { role: 'user', content: message }
-        ],
-        intelligence,
-        schema: output_schema
-      }),
-      LLM_TIMEOUT_MS
-    );
+  if (skip_if && skip_if(context)) {
+    logger.info('Skipping LLM step');
+    return {};
   }
-  return executeMultiTurn(resolvedSystemPrompt, message, tool_choice, intelligence, renderMessage, context);
-}
 
-async function executeMultiTurn(systemPrompt, initialMessage, choice, intelligence, renderMessage, baseContext) {
-  const { available_actions, stop_action, max_iterations } = choice;
-  const conversation = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: initialMessage }
-  ];
+  const { systemPrompt, renderMessage } = resolveStepTemplates(step);
+  const sysPrompt = systemPrompt(context);
+  const userMsg = renderMessage(context);
+
+  // Single-turn: no tool_choice
+  if (!tool_choice) {
+    const result = await withTimeout(generate({
+      messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userMsg }],
+      intelligence, schema: output_schema
+    }), TIMEOUT_MS);
+    return { result };
+  }
+
+  // Multi-turn with tools
+  const { available_actions, stop_action, max_iterations } = tool_choice;
   const tools = buildTools(available_actions);
-  const addToolResponse = (id, content) => conversation.push({ role: 'tool', tool_call_id: id, content: JSON.stringify(content) });
+  let conversation = [{ role: 'system', content: sysPrompt }, { role: 'user', content: userMsg }];
+  const addToolResult = (id, content) => conversation.push({ role: 'tool', tool_call_id: id, content: JSON.stringify(content) });
 
-  for (let i = 0; i < max_iterations; i++) {
-    logger.info(`Turn ${i + 1}/${max_iterations}`);
+  for (let turn = 0; turn < max_iterations; turn++) {
+    logger.info(`Turn ${turn + 1}/${max_iterations}`);
+    const response = await withTimeout(generate({ messages: conversation, intelligence, tools }), TIMEOUT_MS);
 
-    const llmResponse = await withTimeout(
-      generate({ messages: conversation, intelligence, tools }),
-      LLM_TIMEOUT_MS
-    );
-
-    if (!llmResponse.tool_calls?.length) {
-      logger.warn('LLM returned text instead of tool call, prompting to use tools');
-      conversation.push({ role: 'assistant', content: llmResponse.content || 'I need to use a tool to help with this.' });
-      conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed.' });
+    if (!response.tool_calls?.length) {
+      logger.warn('LLM returned text instead of tool call');
+      conversation.push({ role: 'assistant', content: response.content });
+      conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed. Use FINAL_RESPONSE if complete or if data is gathered and needs formatting or extraction.' });
       continue;
     }
 
-    conversation.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+    conversation.push({ role: 'assistant', content: null, tool_calls: response.tool_calls });
 
-    // Execute all tool calls serially with individual timeouts
-    for (const toolCall of llmResponse.tool_calls) {
-      const { name: toolName } = toolCall.function;
-      let toolArgs;
-      try {
-        toolArgs = JSON.parse(toolCall.function.arguments || '{}');
-      } catch {
-        logger.error('Invalid JSON in tool arguments', { raw: toolCall.function.arguments });
-        addToolResponse(toolCall.id, { error: 'Invalid JSON in tool arguments' });
-        break;
-      }
+    for (const call of response.tool_calls) {
+      const toolName = call.function.name;
+      let args;
+      try { args = JSON.parse(call.function.arguments); }
+      catch { addToolResult(call.id, { error: 'Invalid JSON in arguments' }); break; }
 
-      logger.info(`Tool call: ${toolName}`, { id: toolCall.id });
-
-      const targetAction = actionsRegistry[toolName];
-      if (!targetAction) {
-        addToolResponse(toolCall.id, { error: `Action not found: ${toolName}` });
-        break;
-      }
-
-      const actionParams = pickParams(toolArgs, targetAction);
-      if (toolName === stop_action) actionParams.messages = JSON.stringify(conversation, null, 2);
+      const action = actionsRegistry[toolName];
+      if (!action) { addToolResult(call.id, { error: `Unknown action: ${toolName}` }); break; }
 
       try {
-        const result = await withTimeout(executeAction(targetAction, actionParams), STEP_TIMEOUT_MS);
-        if (toolName === stop_action) return unwrapStopResult(result);
-        addToolResponse(toolCall.id, result);
-      } catch (error) {
-        const errorContent = error.isValidationError
-          ? { error: 'Validation failed', details: error.validationErrors }
-          : { error: error.message };
-        logger.warn(`${toolName} failed`, errorContent);
-        addToolResponse(toolCall.id, errorContent);
-        break; // Stop executing remaining tool calls on error
+        const res = await executeAction(action, args, conversation);
+        if (toolName === stop_action) return { result: res.result };
+        if (res.parent_messages) conversation = res.parent_messages;
+        addToolResult(call.id, res.result);
+      } catch (err) {
+        addToolResult(call.id, err.isValidationError ? { error: 'Validation failed', details: err.validationErrors } : { error: err.message });
+        break;
       }
     }
 
-    // Insert complete message with updated browser state at end of turn
-    const browser_state = await getBrowserStateBundle();
-    conversation.push({ role: 'user', content: renderMessage({ ...baseContext, browser_state }) });
+    conversation.push({ role: 'user', content: renderMessage({ ...context, browser_state: await getBrowserStateBundle() }) });
   }
 
-  logger.error('Max iterations reached, invoking stop action');
-  const stopResponse = 'I was unable to complete the task within the allowed number of steps. Here is what I accomplished so far.';
-  conversation.push({
-    role: 'assistant',
-    content: null,
-    tool_calls: [{
-      id: `max-iter-${Date.now()}`,
-      type: 'function',
-      function: { name: stop_action, arguments: JSON.stringify({ response: stopResponse, justification: 'Maximum iterations reached' }) }
-    }]
-  });
-
-  return unwrapStopResult(await executeAction(actionsRegistry[stop_action], {
-    response: stopResponse,
-    messages: JSON.stringify(conversation, null, 2)
-  }));
-}
-
-function pickParams(source, actionDef) {
-  if (!actionDef.input_schema?.properties) return {};
-  return Object.fromEntries(
-    Object.keys(actionDef.input_schema.properties).filter(k => k in source).map(k => [k, source[k]])
-  );
+  // Max iterations - force stop
+  logger.error('Max iterations reached');
+  const stopRes = await executeAction(actionsRegistry[stop_action], { justification: 'Max iterations reached' }, conversation);
+  return { result: stopRes.result };
 }
 
 function buildTools(availableActions) {
@@ -194,9 +161,13 @@ function buildTools(availableActions) {
   }).filter(Boolean);
 }
 
-function unwrapStopResult(result) {
+// Extract final answer from nested result - use at top level only
+export function unwrapFinalAnswer(result) {
   if (typeof result === 'string') return result;
-  return result?.final_answer || JSON.stringify(result);
+  // Traverse nested result objects to find final_answer
+  const inner = result?.result || result;
+  if (typeof inner === 'string') return inner;
+  return inner?.final_answer || inner?.result?.final_answer || JSON.stringify(inner);
 }
 
 const withTimeout = (promise, ms) => Promise.race([

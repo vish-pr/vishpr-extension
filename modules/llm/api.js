@@ -54,13 +54,16 @@ export async function callOpenAICompatible({ endpoint, model, messages, tools, s
   // For structured schema, parse JSON from content
   if (schema && message.content) {
     try {
-      return JSON.parse(message.content);
+      const parsed = JSON.parse(message.content);
+      logger.debug('LLM Response', { endpoint, model, response: parsed });
+      return parsed;
     } catch (e) {
       logger.error('Failed to parse schema response', { content: message.content, error: e.message });
       throw new Error(`Invalid JSON in schema response: ${e.message}`);
     }
   }
 
+  logger.debug('LLM Response', { endpoint, model, response: message });
   return message;
 }
 

@@ -2,15 +2,10 @@
  * LLM action - calls LLM for general knowledge, analysis, and reasoning
  * Not a stop action - continues the agentic loop after getting a response
  */
+import type { Action, JSONSchema } from './types/index.js';
 
-/**
- * Action name constant
- */
 export const LLM_TOOL = 'LLM_TOOL';
 
-/**
- * System prompt for generating the task-specific prompt
- */
 const PROMPT_GENERATOR_SYSTEM = `You are an expert at crafting system prompts that guide large language models to produce accurate, helpful, and relevant responses.
 
 Your task is to create a tailored system prompt based on the user's specific intent. Consider:
@@ -21,12 +16,36 @@ Your task is to create a tailored system prompt based on the user's specific int
 
 The system prompt you create will be used by a high-intelligence LLM to address the user's query directly.`;
 
+const PROMPT_OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    generated_prompt: {
+      type: 'string',
+      description: 'System prompt for the main LLM call'
+    }
+  },
+  required: ['generated_prompt'],
+  additionalProperties: false
+};
+
+const RESPONSE_OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    response: {
+      type: 'string',
+      description: 'The response to the user instruction'
+    }
+  },
+  required: ['response'],
+  additionalProperties: false
+};
+
 /**
  * LLM_TOOL action
  * Calls a large language model for general knowledge, analysis, reasoning, and planning
  * This is NOT a stop action - the loop continues after getting a response
  */
-export const llmAction = {
+export const llmAction: Action = {
   name: LLM_TOOL,
   description: 'Calls a large language model for general knowledge, analysis, reasoning, and planning. Best for: answering knowledge questions, code generation, problem-solving, strategy development, and tasks requiring general world understanding. Limitations: No access to live/current information, web browsing, or file system.',
   examples: [
@@ -51,7 +70,6 @@ export const llmAction = {
   },
   steps: [
     {
-      // First LLM step - generate a tailored system prompt
       type: 'llm',
       system_prompt: PROMPT_GENERATOR_SYSTEM,
       message: `Create a system prompt for answering the user's query. This system prompt will be given to an LLM to generate a response.
@@ -61,35 +79,14 @@ User's instruction: {{{instruction}}}
 
 Generate a clear, focused system prompt that will guide the LLM to provide the best possible response.`,
       intelligence: 'LOW',
-      output_schema: {
-        type: 'object',
-        properties: {
-          generated_prompt: {
-            type: 'string',
-            description: 'System prompt for the main LLM call'
-          }
-        },
-        required: ['generated_prompt'],
-        additionalProperties: false
-      }
+      output_schema: PROMPT_OUTPUT_SCHEMA
     },
     {
-      // Second LLM step - generate the actual response using the tailored prompt
       type: 'llm',
       system_prompt: '{{{generated_prompt}}}',
       message: `Instruction: {{{instruction}}}`,
       intelligence: 'HIGH',
-      output_schema: {
-        type: 'object',
-        properties: {
-          response: {
-            type: 'string',
-            description: 'The response to the user instruction'
-          }
-        },
-        required: ['response'],
-        additionalProperties: false
-      }
+      output_schema: RESPONSE_OUTPUT_SCHEMA
     }
   ]
 };

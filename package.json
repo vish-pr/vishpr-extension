@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "find . -name '*.test.js' -not -path './node_modules/*' -exec node {} \\;",
+    "test": "find . \\( -name '*.test.js' -o -name '*.test.ts' \\) -not -path './node_modules/*' -exec npx tsx {} \\;",
+    "typecheck": "tsc --noEmit",
     "prebuild": "npm test && rm -rf dist && mkdir -p dist && cp manifest.json icon-128.png sidepanel.html dist/",
     "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
     "build:css": "tailwindcss -i ./input.css -o ./dist/styles.css --minify",
@@ -21,9 +22,13 @@
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.18",
+    "@types/mustache": "^4.2.6",
+    "@types/node": "^25.0.9",
     "concurrently": "^9.2.1",
     "daisyui": "^5.0.0",
     "esbuild": "^0.24.0",
-    "tailwindcss": "^4.1.18"
+    "tailwindcss": "^4.1.18",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }

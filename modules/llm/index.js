@@ -47,7 +47,6 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
 
   for (const { endpoint, model, openrouterProvider, noToolChoice } of cascadingModels) {
     if (await shouldSkip(endpoint, model, openrouterProvider)) {
-      logger.debug(`Skipping ${endpoint}:${model} (backoff)`);
       continue;
     }
 
@@ -62,7 +61,6 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
       }
 
       logger.info(`LLM Response: ${endpoint}/${model}`);
-      logger.debug('LLM Response Details', { endpoint, model, response: result });
 
       await recordSuccess(endpoint, model, openrouterProvider);
       return result;
@@ -75,28 +73,30 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
   }
 
   // Fallback: try all models sorted by recent errors, ignoring backoff
-  logger.info('Cascade failed, attempting fallback recovery');
   const sortedModels = await getAllModelsSortedByRecentErrors();
+  logger.info('Cascade failed, attempting fallback recovery', { models: sortedModels.map(m => m.model) });
 
+  const results = [];
   for (const { endpoint, model, openrouterProvider, noToolChoice } of sortedModels) {
     try {
-      logger.info(`Fallback attempt: ${endpoint}/${model}`);
       const result = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
 
       if (tools && result.tool_calls?.length && !result.tool_calls[0].function?.name) {
         throw new Error('Invalid tool call: missing function name');
       }
 
-      logger.info(`Fallback success: ${endpoint}/${model}`);
+      results.push({ model, status: 'pass' });
+      logger.info('Fallback recovery complete', { results });
       await recordSuccess(endpoint, model, openrouterProvider);
       return result;
     } catch (error) {
       lastError = error;
+      results.push({ model, status: 'fail', error: error.message });
       await recordError(endpoint, model, openrouterProvider);
-      logger.warn(`Fallback failure: ${endpoint}/${model}`, { error: error.message });
     }
   }
 
+  logger.error('All fallback models failed', { results });
   throw new Error(`All models failed. Last error: ${lastError?.message || 'Unknown'}`);
 }
 

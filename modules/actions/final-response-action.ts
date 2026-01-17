@@ -2,15 +2,10 @@
  * Final response action - terminates the task with a user-facing answer
  * Uses two-stage LLM: first generates a tailored system prompt, then extracts/summarizes
  */
+import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
 
-/**
- * Action name constant
- */
 export const FINAL_RESPONSE = 'FINAL_RESPONSE';
 
-/**
- * System prompt for generating the extraction prompt
- */
 const PROMPT_GENERATOR_SYSTEM = `You are an expert at creating system prompts that guide LLMs to extract and summarize relevant information from conversation data.
 
 Your goal is to create a system prompt that:
@@ -21,11 +16,35 @@ Your goal is to create a system prompt that:
 
 The system prompt you create will be used by another LLM to process the conversation messages and extract only what matters to the user.`;
 
-/**
- * FINAL_RESPONSE action
- * Produces the final user-facing answer and terminates the task
- */
-export const finalResponseAction = {
+const EXTRACTION_OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    extraction_prompt: {
+      type: 'string',
+      description: 'System prompt for extracting information'
+    }
+  },
+  required: ['extraction_prompt'],
+  additionalProperties: false
+};
+
+const FINAL_OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    final_answer: {
+      type: 'string',
+      description: 'The complete, polished answer to present to the user'
+    },
+    method: {
+      type: 'string',
+      description: 'Brief description of steps taken to gather this data'
+    }
+  },
+  required: ['final_answer', 'method'],
+  additionalProperties: false
+};
+
+export const finalResponseAction: Action = {
   name: FINAL_RESPONSE,
   description: `MANDATORY FINAL STEP.
 
@@ -62,57 +81,41 @@ Purpose:
   },
   steps: [
     {
-      // First LLM step - generate a tailored extraction prompt
+      type: 'function',
+      handler: (ctx: StepContext): StepResult => ({
+        result: {
+          messages_history: Array.isArray(ctx.parent_messages)
+            ? JSON.stringify(ctx.parent_messages, null, 2)
+            : ctx.parent_messages
+        }
+      })
+    },
+    {
       type: 'llm',
       system_prompt: PROMPT_GENERATOR_SYSTEM,
       message: `Create a system prompt for extracting relevant information from data present, remove irrelevant information. Avoid repetition, and keep all relevant information.
 This system prompt will be given to LLM to extract information from data present. You do not need to extract information, but only create a system prompt which is relevant to this data.
 
 <messages>
-{{{messages}}}
+{{{messages_history}}}
 </messages>`,
       intelligence: 'LOW',
-      output_schema: {
-        type: 'object',
-        properties: {
-          extraction_prompt: {
-            type: 'string',
-            description: 'System prompt for extracting information'
-          }
-        },
-        required: ['extraction_prompt'],
-        additionalProperties: false
-      }
+      output_schema: EXTRACTION_OUTPUT_SCHEMA
     },
     {
-      // Second LLM step - extract and summarize using the generated prompt
       type: 'llm',
       system_prompt: '{{{extraction_prompt}}}',
       message: `Extract and summarize the relevant information. Focus on data that directly addresses the user's intent.
 
 <messages>
-{{{messages}}}
+{{{messages_history}}}
 </messages>
 
 In your response:
 1. 'final_answer' field: Provide a clean, user-friendly summary of the relevant information with no redundancy
 2. 'method' field: Briefly describe the steps taken to gather this data (2-3 lines for bookkeeping purposes)`,
       intelligence: 'MEDIUM',
-      output_schema: {
-        type: 'object',
-        properties: {
-          final_answer: {
-            type: 'string',
-            description: 'The complete, polished answer to present to the user'
-          },
-          method: {
-            type: 'string',
-            description: 'Brief description of steps taken to gather this data'
-          }
-        },
-        required: ['final_answer', 'method'],
-        additionalProperties: false
-      }
+      output_schema: FINAL_OUTPUT_SCHEMA
     }
   ]
 };
