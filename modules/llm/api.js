@@ -2,7 +2,6 @@
  * LLM API - Core OpenAI-compatible API call
  */
 
-import logger from '../logger.js';
 import { resolveEndpoint, getEndpoints } from './endpoints.js';
 
 export async function callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice }) {
@@ -29,8 +28,6 @@ export async function callOpenAICompatible({ endpoint, model, messages, tools, s
     request.provider = { only: [openrouterProvider] };
   }
 
-  logger.debug('LLM Request Details', { endpoint, model, request });
-
   const response = await fetch(config.url, {
     method: 'POST',
     headers: config.headers,
@@ -54,16 +51,12 @@ export async function callOpenAICompatible({ endpoint, model, messages, tools, s
   // For structured schema, parse JSON from content
   if (schema && message.content) {
     try {
-      const parsed = JSON.parse(message.content);
-      logger.debug('LLM Response', { endpoint, model, response: parsed });
-      return parsed;
+      return JSON.parse(message.content);
     } catch (e) {
-      logger.error('Failed to parse schema response', { content: message.content, error: e.message });
       throw new Error(`Invalid JSON in schema response: ${e.message}`);
     }
   }
 
-  logger.debug('LLM Response', { endpoint, model, response: message });
   return message;
 }
 

@@ -1,16 +1,17 @@
 {
   "name": "vishpr-extension",
   "private": true,
+  "license": "CC-BY-NC-4.0",
   "type": "module",
   "scripts": {
     "test": "find . \\( -name '*.test.js' -o -name '*.test.ts' \\) -not -path './node_modules/*' -exec npx tsx {} \\;",
     "typecheck": "tsc --noEmit",
-    "prebuild": "npm test && rm -rf dist && mkdir -p dist && cp manifest.json icon-128.png sidepanel.html devtools.html devtools-panel.html devtools-panel.css dist/",
-    "build": "esbuild sidepanel.js background.js content.js devtools.js devtools-panel.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
+    "prebuild": "npm test && rm -rf dist && mkdir -p dist && cp manifest.json icon-*.png sidepanel.html dist/",
+    "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
     "build:css": "tailwindcss -i ./input.css -o ./dist/styles.css --minify",
     "prewatch": "npm run prebuild",
     "watch": "concurrently \"npm run watch:js\" \"npm run watch:css\"",
-    "watch:js": "esbuild sidepanel.js background.js content.js devtools.js devtools-panel.js --bundle --outdir=dist --format=esm --watch",
+    "watch:js": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --watch",
     "watch:css": "tailwindcss -i ./input.css -o ./dist/styles.css --watch"
   },
   "dependencies": {

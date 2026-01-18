@@ -51,16 +51,11 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
     }
 
     try {
-      const logInfo = tools ? { toolCount: tools.length } : { schema: true };
-      logger.info(`LLM Request: ${endpoint}/${model}`, { messageCount: messages.length, intelligence, ...logInfo });
-
       const result = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
 
       if (tools && result.tool_calls?.length && !result.tool_calls[0].function?.name) {
         throw new Error('Invalid tool call: missing function name');
       }
-
-      logger.info(`LLM Response: ${endpoint}/${model}`);
 
       await recordSuccess(endpoint, model, openrouterProvider);
       return result;
@@ -68,7 +63,6 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
     } catch (error) {
       lastError = error;
       await recordError(endpoint, model, openrouterProvider);
-      logger.warn(`LLM Failure: ${endpoint}/${model}`, { error: error.message });
     }
   }
 

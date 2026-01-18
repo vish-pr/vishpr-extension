@@ -159,3 +159,135 @@ body { @apply flex flex-col; }
   background: oklch(var(--bc) / 0.08);
 }
 
+/* ==========================================================================
+   Debug Panel - Industrial Terminal Aesthetic
+   ========================================================================== */
+
+#debugContainer {
+  --dbg-action: #3b82f6;
+  --dbg-action-bg: rgba(59, 130, 246, 0.1);
+  --dbg-llm: #8b5cf6;
+  --dbg-llm-bg: rgba(139, 92, 246, 0.1);
+  --dbg-chrome: #f59e0b;
+  --dbg-chrome-bg: rgba(245, 158, 11, 0.1);
+  --dbg-context: #10b981;
+  --dbg-context-bg: rgba(16, 185, 129, 0.1);
+  --dbg-function: #6366f1;
+  --dbg-function-bg: rgba(99, 102, 241, 0.1);
+  --dbg-success: #22c55e;
+  --dbg-error: #ef4444;
+  --dbg-warning: #eab308;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+/* Trace nodes */
+.trace-node { @apply mb-0.5; }
+.trace-node.expanded > .trace-header .trace-toggle { transform: rotate(90deg); }
+.trace-node.expanded > .trace-details { @apply block; }
+.trace-node.expanded > .trace-children { @apply block; }
+
+.trace-header {
+  @apply flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors;
+  &:hover { background: oklch(var(--bc) / 0.05); }
+}
+
+.trace-toggle {
+  @apply text-xs opacity-30 transition-transform w-3;
+}
+
+/* Node type icons */
+.trace-icon {
+  @apply w-5 h-5 rounded flex items-center justify-center text-xs font-bold shrink-0;
+}
+.trace-icon-action { background: var(--dbg-action-bg); color: var(--dbg-action); }
+.trace-icon-step { background: oklch(var(--bc) / 0.1); color: oklch(var(--bc) / 0.6); }
+.trace-icon-llm { background: var(--dbg-llm-bg); color: var(--dbg-llm); }
+.trace-icon-chrome { background: var(--dbg-chrome-bg); color: var(--dbg-chrome); }
+.trace-icon-context { background: var(--dbg-context-bg); color: var(--dbg-context); }
+.trace-icon-function { background: var(--dbg-function-bg); color: var(--dbg-function); }
+.trace-icon-iteration { background: oklch(var(--bc) / 0.1); color: oklch(var(--bc) / 0.5); }
+
+.trace-name { @apply flex-1 font-medium truncate; }
+.trace-type { @apply text-xs opacity-50 px-1.5 py-0.5 rounded; background: oklch(var(--bc) / 0.08); }
+.trace-timing { @apply text-xs opacity-40 font-mono; }
+.trace-status-success { color: var(--dbg-success); }
+.trace-status-error { color: var(--dbg-error); }
+.trace-status-running { color: var(--dbg-warning); animation: pulse 1s infinite; }
+
+/* Trace details */
+.trace-details {
+  @apply hidden ml-5 pl-3 py-2 space-y-2 text-xs;
+  border-left: 2px solid oklch(var(--bc) / 0.1);
+}
+.trace-detail-row {
+  @apply flex gap-3;
+}
+.trace-detail-label {
+  @apply w-16 shrink-0 opacity-50 uppercase text-[10px] tracking-wide pt-0.5;
+}
+.trace-detail-value {
+  @apply flex-1 min-w-0;
+}
+.trace-detail-value pre {
+  @apply whitespace-pre-wrap break-words p-2 rounded overflow-auto max-h-48;
+  background: oklch(var(--b3));
+}
+
+.trace-children { @apply hidden pl-4; }
+
+/* Critique styling */
+.critique-card {
+  @apply p-3 rounded-lg mb-2;
+  background: oklch(var(--b2));
+  border: 1px solid oklch(var(--bc) / 0.1);
+}
+.critique-card-header {
+  @apply flex items-center justify-between mb-2 pb-2;
+  border-bottom: 1px solid oklch(var(--bc) / 0.1);
+}
+.critique-summary {
+  @apply p-3 rounded mb-3;
+  background: oklch(var(--b3));
+}
+
+.critique-section-title {
+  @apply text-[10px] font-semibold uppercase tracking-wider opacity-50 mb-2;
+}
+
+.critique-issue {
+  @apply p-3 rounded-lg mb-2;
+  border-left: 3px solid;
+}
+.critique-issue-high {
+  border-color: var(--dbg-error);
+  background: rgba(239, 68, 68, 0.08);
+}
+.critique-issue-medium {
+  border-color: var(--dbg-warning);
+  background: rgba(234, 179, 8, 0.08);
+}
+.critique-issue-low {
+  border-color: var(--dbg-action);
+  background: rgba(59, 130, 246, 0.05);
+}
+.critique-issue-location {
+  @apply font-medium mb-1;
+}
+.critique-issue-problem {
+  @apply opacity-80 mb-2;
+}
+.critique-issue-suggestion {
+  color: var(--dbg-warning);
+}
+.critique-issue-badge {
+  @apply text-[10px] font-bold uppercase px-2 py-0.5 rounded;
+}
+.critique-issue-badge-high { background: var(--dbg-error); color: white; }
+.critique-issue-badge-medium { background: var(--dbg-warning); color: black; }
+.critique-issue-badge-low { background: var(--dbg-action); color: white; }
+
+.critique-recommendations {
+  @apply list-decimal list-inside space-y-1;
+}
+

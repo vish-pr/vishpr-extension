@@ -646,6 +646,117 @@
       font-style: italic;
     }
 
+    /* ==================== PRIVACY POLICY ==================== */
+    .privacy-policy {
+      padding: 120px 0;
+      position: relative;
+    }
+
+    .privacy-policy::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--color-border), transparent);
+    }
+
+    .privacy-content {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-top: 40px;
+    }
+
+    .privacy-card {
+      background: var(--color-bg-card);
+      border-radius: 16px;
+      padding: 28px;
+      border: 1px solid var(--color-border);
+    }
+
+    .privacy-card h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--color-cream);
+      margin-bottom: 16px;
+    }
+
+    .privacy-card p {
+      font-size: 0.9rem;
+      color: var(--color-text-muted);
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+
+    .privacy-card ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .privacy-card li {
+      font-size: 0.9rem;
+      color: var(--color-text-muted);
+      padding: 6px 0;
+      padding-left: 20px;
+      position: relative;
+    }
+
+    .privacy-card li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 14px;
+      width: 6px;
+      height: 6px;
+      background: var(--color-accent);
+      border-radius: 50%;
+      opacity: 0.6;
+    }
+
+    .privacy-card a {
+      color: var(--color-accent);
+      text-decoration: none;
+    }
+
+    .privacy-card a:hover {
+      text-decoration: underline;
+    }
+
+    .permissions-table {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .perm-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: oklch(0.2 0.015 270);
+      border-radius: 8px;
+    }
+
+    .perm-name {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--color-accent);
+    }
+
+    .perm-desc {
+      font-size: 0.85rem;
+      color: var(--color-text-muted);
+    }
+
+    .privacy-footer-note {
+      text-align: center;
+      margin-top: 40px;
+      font-size: 0.9rem;
+      color: var(--color-text-subtle);
+    }
+
     /* ==================== RESPONSIVE ==================== */
     @media (max-width: 900px) {
       .hero-content {
@@ -671,7 +782,8 @@
         margin-right: auto;
       }
 
-      .features-grid {
+      .features-grid,
+      .privacy-content {
         grid-template-columns: 1fr;
       }
 
@@ -898,6 +1010,80 @@
     </div>
   </section>
 
+  <!-- PRIVACY POLICY SECTION -->
+  <section class="privacy-policy" id="privacy">
+    <div class="container">
+      <div class="section-header">
+        <h2>Privacy Policy</h2>
+        <p>Last updated: January 2026</p>
+      </div>
+      <div class="privacy-content">
+        <div class="privacy-card">
+          <h3>What We Collect</h3>
+          <p>The Extension processes the following data <strong>locally on your device</strong>:</p>
+          <ul>
+            <li>Your natural language commands</li>
+            <li>Page content needed to execute your requests</li>
+            <li>Your OpenRouter API key (stored in Chrome storage)</li>
+            <li>Chat history and settings (stored locally)</li>
+          </ul>
+        </div>
+
+        <div class="privacy-card">
+          <h3>Third-Party Services</h3>
+          <p>To process commands, we send data to <strong>OpenRouter</strong> using your personal API key:</p>
+          <ul>
+            <li>Your commands and relevant page content</li>
+            <li>We do not operate any servers</li>
+            <li>Your API key is never shared with us</li>
+          </ul>
+          <p>See <a href="https://openrouter.ai/privacy">OpenRouter's privacy policy</a>.</p>
+        </div>
+
+        <div class="privacy-card">
+          <h3>What We Don't Collect</h3>
+          <ul>
+            <li>Personal identification information</li>
+            <li>Passwords or sensitive form data</li>
+            <li>Browsing history beyond the current session</li>
+            <li>Payment or location data</li>
+          </ul>
+        </div>
+
+        <div class="privacy-card">
+          <h3>Permissions Explained</h3>
+          <div class="permissions-table">
+            <div class="perm-row"><span class="perm-name">sidePanel</span><span class="perm-desc">Display chat interface</span></div>
+            <div class="perm-row"><span class="perm-name">tabs</span><span class="perm-desc">Navigate between pages</span></div>
+            <div class="perm-row"><span class="perm-name">activeTab</span><span class="perm-desc">Read current page content</span></div>
+            <div class="perm-row"><span class="perm-name">scripting</span><span class="perm-desc">Click, type, and interact</span></div>
+            <div class="perm-row"><span class="perm-name">storage</span><span class="perm-desc">Save settings locally</span></div>
+            <div class="perm-row"><span class="perm-name">&lt;all_urls&gt;</span><span class="perm-desc">Work on any website</span></div>
+          </div>
+        </div>
+
+        <div class="privacy-card">
+          <h3>Your Rights</h3>
+          <ul>
+            <li><strong>Delete data:</strong> Clear Chrome's extension storage anytime</li>
+            <li><strong>Revoke access:</strong> Uninstall the extension</li>
+            <li><strong>Control API:</strong> Revoke your OpenRouter key to stop processing</li>
+          </ul>
+        </div>
+
+        <div class="privacy-card">
+          <h3>Security</h3>
+          <ul>
+            <li>All data transmission uses HTTPS encryption</li>
+            <li>Your API key stays on your device</li>
+            <li>No external servers controlled by us</li>
+          </ul>
+        </div>
+      </div>
+      <p class="privacy-footer-note">This extension is not intended for children under 13. By using Vishpr, you consent to this policy.</p>
+    </div>
+  </section>
+
   <!-- FOOTER -->
   <footer>
     <div class="container">
@@ -908,7 +1094,7 @@
         </a>
         <nav class="footer-links">
           <a href="#how">How it works</a>
-          <a href="#">Privacy</a>
+          <a href="#privacy">Privacy</a>
           <a href="#">Contact</a>
         </nav>
         <span class="footer-tagline">Made for humans who'd rather not click</span>
