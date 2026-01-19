@@ -1,15 +1,16 @@
 // Background Service Worker
 import { verifyApiKey as llmVerifyApiKey, isInitialized } from './modules/llm/index.js';
 import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
-import { getAction, BROWSER_ROUTER, actionsRegistry } from './modules/actions/index.js';
+import { getAction, BROWSER_ROUTER, CRITIQUE, actionsRegistry } from './modules/actions/index.js';
 import logger from './modules/logger.js';
 import { getChromeAPI } from './modules/chrome-api.js';
 import { tracer } from './modules/trace-collector.js';
-import { generateAndStoreCritique } from './modules/critique.js';
-import { storeTrace, getTraces, getTraceByRunId, deleteTrace, clearTraces } from './modules/trace-storage.js';
+import { storeTrace, getTraces, getTraceByRunId, deleteTrace, clearTraces, updateTrace } from './modules/trace-storage.js';
 
 // Enable side panel on extension icon click
 chrome.action.onClicked.addListener(async (tab) => {
+  const chromeAPI = getChromeAPI();
+  chromeAPI.setWindowId(tab.windowId);
   await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
@@ -107,11 +108,15 @@ async function handleUserMessage({ message }) {
 }
 
 // Non-blocking critique runner (fire-and-forget)
-function runCritiqueAsync(runId, trace) {
+async function runCritiqueAsync(runId, trace) {
   if (!trace) return;
-  generateAndStoreCritique(runId, trace).catch(e =>
-    console.error('Critique failed:', e.message)
-  );
+  try {
+    const critiqueAction = getAction(CRITIQUE);
+    const result = await executeAction(critiqueAction, { trace });
+    await updateTrace(runId, { critique: result.result });
+  } catch (e) {
+    console.error('Critique failed:', e.message);
+  }
 }
 
 // Verify API key
@@ -180,31 +185,3 @@ async function handleDebugExecute({ actionName, params, runId }) {
   }
 }
 
-// ============================================
-// Browser State Persistence
-// ============================================
-
-setInterval(async () => {
-  try {
-    const chromeAPI = getChromeAPI();
-    const stateJSON = chromeAPI.toJSON();
-    await chrome.storage.local.set({ browserState: stateJSON });
-    logger.debug('Browser state persisted to storage');
-  } catch (error) {
-    logger.error('Failed to persist browser state', { error: error.message });
-  }
-}, 60000);
-
-chrome.runtime.onStartup.addListener(async () => {
-  try {
-    const chromeAPI = getChromeAPI();
-    const result = await chrome.storage.local.get('browserState');
-
-    if (result.browserState) {
-      chromeAPI.fromJSON(result.browserState);
-      logger.info('Browser state restored from storage');
-    }
-  } catch (error) {
-    logger.error('Failed to restore browser state', { error: error.message });
-  }
-});

@@ -28,11 +28,6 @@
           <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2M7.5 13A1.5 1.5 0 1 0 9 14.5A1.5 1.5 0 0 0 7.5 13m9 0a1.5 1.5 0 1 0 1.5 1.5a1.5 1.5 0 0 0-1.5-1.5"/>
         </svg>
       </button>
-      <button id="historyToggle" class="btn btn-ghost btn-sm btn-square" title="Data & History">
-        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
-        </svg>
-      </button>
       <button id="settingsToggle" class="btn btn-ghost btn-sm btn-square" title="Settings">
         <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
@@ -172,41 +167,6 @@
     </div>
   </div>
 
-  <!-- Extraction Panel -->
-  <div class="hidden bg-base-200 border-b border-base-content/10" id="extractionPanel">
-    <div class="p-3 h-[40vh] flex flex-col">
-      <div role="tablist" class="tabs tabs-boxed bg-base-300 mb-2 shrink-0">
-        <button role="tab" class="tab tab-active text-xs" data-tab="current">Current</button>
-        <button role="tab" class="tab text-xs" data-tab="history">History</button>
-        <button role="tab" class="tab text-xs" data-tab="actions">Actions</button>
-        <button role="tab" class="tab text-xs" data-tab="stats">Stats</button>
-      </div>
-
-      <div id="currentTabContent" class="flex-1 flex flex-col overflow-hidden">
-        <button id="extractButton" class="btn btn-primary btn-sm w-full mb-2 gap-2 shrink-0">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          Extract
-        </button>
-        <div id="currentTabExtractionContent" class="flex-1 overflow-y-auto"></div>
-      </div>
-      <div id="historyTabContent" class="hidden flex-1 overflow-y-auto"></div>
-      <div id="actionsTabContent" class="hidden flex-1 overflow-y-auto"></div>
-      <div id="statsTabContent" class="hidden flex-1 overflow-y-auto">
-        <div class="model-stats-container space-y-3" id="modelStatsContainer">
-          <div class="stats-empty text-center py-8 opacity-50">
-            <svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
-            </svg>
-            <p class="text-xs">No model stats yet</p>
-            <p class="text-xs opacity-50 mt-1">Stats appear after models are used</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- Debug Container -->
   <div class="hidden flex-1 flex flex-col overflow-hidden" id="debugContainer">
     <!-- Command Input -->
@@ -225,8 +185,14 @@
       <div id="debugParams" class="hidden mt-2 p-2 bg-base-300 rounded-lg text-xs"></div>
     </div>
 
-    <!-- Debug Content: History + Trace/Critique -->
-    <div class="flex-1 flex overflow-hidden">
+    <!-- Debug Tabs -->
+    <div role="tablist" class="tabs tabs-boxed bg-base-300 mx-2 mb-2 shrink-0">
+      <button role="tab" class="tab tab-active text-xs" data-debug-tab="trace">Trace</button>
+      <button role="tab" class="tab text-xs" data-debug-tab="stats">Stats</button>
+    </div>
+
+    <!-- Debug Content: History + Stacked Timeline -->
+    <div id="debugTraceTab" class="flex-1 flex overflow-hidden">
       <!-- History Sidebar -->
       <div class="w-1/4 min-w-24 max-w-32 border-r border-base-content/10 flex flex-col bg-base-200/50">
         <div class="p-2 border-b border-base-content/10 flex items-center justify-between">
@@ -236,29 +202,34 @@
         <div id="debugHistory" class="flex-1 overflow-y-auto p-1 space-y-1"></div>
       </div>
 
-      <!-- Trace + Critique -->
+      <!-- Unified Timeline: Trace + Critique stacked -->
       <div class="flex-1 flex flex-col overflow-hidden">
-        <!-- Trace Section -->
-        <div class="flex-1 overflow-hidden flex flex-col">
-          <div class="px-2 py-1 bg-base-200 border-b border-base-content/10 flex items-center gap-2">
-            <span class="text-xs font-medium opacity-50">Trace</span>
-            <span id="debugTiming" class="text-xs opacity-30 font-mono"></span>
-          </div>
-          <div id="debugTrace" class="flex-1 overflow-y-auto p-2 text-xs">
-            <div class="flex items-center justify-center h-full opacity-30">Run an action to see trace</div>
+        <!-- Timeline Header -->
+        <div class="px-3 py-2 bg-base-200 border-b border-base-content/10 flex items-center gap-3">
+          <span id="debugTiming" class="text-xs opacity-40 font-mono"></span>
+          <div class="flex-1"></div>
+          <span id="debugCritiqueBadge" class="badge badge-xs"></span>
+          <button id="debugRefreshBtn" class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100" title="Refresh critique"><svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
+        </div>
+        <!-- Stacked Timeline Content -->
+        <div id="debugTimeline" class="flex-1 overflow-y-auto">
+          <div class="debug-empty-state">
+            <div class="debug-empty-icon">▷</div>
+            <div class="debug-empty-text">Run an action to see trace</div>
           </div>
         </div>
+      </div>
+    </div>
 
-        <!-- Critique Section -->
-        <div class="h-2/5 border-t border-base-content/10 flex flex-col overflow-hidden">
-          <div class="px-2 py-1 bg-base-200 border-b border-base-content/10 flex items-center gap-2">
-            <span class="text-xs font-medium opacity-50">Critique</span>
-            <span id="debugCritiqueBadge" class="badge badge-xs"></span>
-            <button id="debugRefreshBtn" class="btn btn-ghost btn-xs btn-square ml-auto opacity-50 hover:opacity-100" title="Refresh"><svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
-          </div>
-          <div id="debugCritique" class="flex-1 overflow-y-auto p-2 text-xs">
-            <div class="flex items-center justify-center h-full opacity-30">Critique appears after execution</div>
-          </div>
+    <!-- Stats Tab Content -->
+    <div id="debugStatsTab" class="hidden flex-1 overflow-y-auto p-3">
+      <div class="model-stats-container space-y-3" id="modelStatsContainer">
+        <div class="stats-empty text-center py-8 opacity-50">
+          <svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
+          </svg>
+          <p class="text-xs">No model stats yet</p>
+          <p class="text-xs opacity-50 mt-1">Stats appear after models are used</p>
         </div>
       </div>
     </div>
@@ -374,22 +345,6 @@
       </div>
     </div>
   </template>
-  <template id="tpl-extraction-item">
-    <div class="card bg-base-300 border border-base-content/10 cursor-pointer mb-2">
-      <div class="card-body p-3 gap-2"><div class="flex justify-between items-start"><h3 class="ext-title card-title text-sm truncate flex-1"></h3><span class="ext-time text-xs opacity-50 ml-2 shrink-0"></span></div>
-        <p class="ext-url text-xs opacity-50 truncate"></p>
-        <div class="flex gap-2 text-xs opacity-50 mt-1"><span><span class="ext-chars text-primary font-medium"></span> chars</span><span><span class="ext-links text-primary font-medium"></span> links</span><span><span class="ext-buttons text-primary font-medium"></span> buttons</span></div>
-      </div>
-    </div>
-  </template>
-  <template id="tpl-extraction-detail">
-    <div class="card bg-base-300 border border-base-content/10 h-full overflow-y-auto">
-      <div class="card-body p-3"><div class="border-b border-base-content/10 pb-2.5 mb-1 shrink-0"><h3 class="detail-title font-medium text-sm"></h3><p class="detail-url text-xs opacity-50 break-all mt-1"></p><p class="detail-time text-xs opacity-50 mt-1.5"></p></div><div class="detail-sections"></div></div>
-    </div>
-  </template>
-  <template id="tpl-extraction-section"><div class="mt-3"><div class="section-label text-xs font-semibold uppercase tracking-wide opacity-50 mb-1.5"></div><div class="section-content text-xs leading-relaxed opacity-50 whitespace-pre-wrap break-words bg-base-300 p-3 rounded max-h-[15vh] overflow-y-auto"></div></div></template>
-  <template id="tpl-action-item"><div class="bg-base-300 border border-base-content/10 rounded-lg p-3 mb-1.5"><div class="action-time text-xs opacity-50"></div><div class="action-desc text-xs opacity-50 leading-relaxed mt-0.5"></div></div></template>
-
   <script src="sidepanel.js" type="module"></script>
 </body>
 </html>

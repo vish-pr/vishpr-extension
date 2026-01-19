@@ -1,7 +1,7 @@
 // Chat Functionality
 import { elements } from './dom.js';
-import { logAction } from './storage.js';
 import { marked } from 'marked';
+import { getEndpoints } from './llm/index.js';
 import DOMPurify from 'dompurify';
 
 // Message history for up/down arrow navigation
@@ -37,9 +37,9 @@ async function setStatus(text, isProcessing = false) {
       // While processing, show active (animated) state
       statusDot.classList.add('active');
     } else {
-      // When idle, show green only if API key is valid
-      const { openrouterApiKeyValid } = await chrome.storage.local.get('openrouterApiKeyValid');
-      statusDot.classList.toggle('active', !!openrouterApiKeyValid);
+      // When idle, show green only if endpoints are configured
+      const endpoints = await getEndpoints();
+      statusDot.classList.toggle('active', Object.keys(endpoints).length > 0);
     }
   }
 }
@@ -150,8 +150,6 @@ async function sendMessage() {
 
   await setStatus('Processing', true);
   addTypingIndicator();
-
-  await logAction('message', `Sent: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
 
   try {
     const response = await sendMessageToBackground(message);

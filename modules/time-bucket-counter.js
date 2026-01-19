@@ -65,17 +65,34 @@ export class TimeBucketCounter {
       sum + buckets[tier].filter(b => b.ts >= since).reduce((s, b) => s + b.count, 0), 0);
   }
 
+  _getLastActivity(buckets) {
+    let latest = 0;
+    for (const tier of ['minute', 'hour', 'day']) {
+      for (const b of buckets[tier]) {
+        if (b.ts > latest) latest = b.ts;
+      }
+    }
+    return latest;
+  }
+
   async getStats(key) {
     await this.load();
     if (!this.data[key]) return null;
 
     const now = Date.now();
-    return Object.fromEntries(Object.entries(this.data[key]).map(([counter, buckets]) => [counter, {
-      total: this._sumBuckets(buckets, 0),
-      lastHour: this._sumBuckets(buckets, now - HOUR),
-      lastDay: this._sumBuckets(buckets, now - DAY),
-      buckets: { minute: buckets.minute.length, hour: buckets.hour.length, day: buckets.day.length }
-    }]));
+    let lastActivity = 0;
+    const stats = Object.fromEntries(Object.entries(this.data[key]).map(([counter, buckets]) => {
+      const activity = this._getLastActivity(buckets);
+      if (activity > lastActivity) lastActivity = activity;
+      return [counter, {
+        total: this._sumBuckets(buckets, 0),
+        lastHour: this._sumBuckets(buckets, now - HOUR),
+        lastDay: this._sumBuckets(buckets, now - DAY),
+        buckets: { minute: buckets.minute.length, hour: buckets.hour.length, day: buckets.day.length }
+      }];
+    }));
+    stats._lastActivity = lastActivity;
+    return stats;
   }
 
   async getAllStats() {

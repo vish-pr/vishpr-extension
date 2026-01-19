@@ -536,21 +536,12 @@ async function toggleSettings(show) {
   elements.settingsPanel.classList.toggle('hidden', !show);
   elements.settingsToggle.classList.toggle('btn-active', show);
   if (!show) return;
-  elements.extractionPanel.classList.add('hidden');
-  elements.historyToggle.classList.remove('btn-active');
   renderEndpoints(); await renderAllModels();
 }
 
 export async function initSettings() {
   currentEndpoints = await getEndpoints();
   currentModels = await getModels();
-
-  // Legacy migration: check for old openrouter key
-  const { openrouterApiKey } = await storage.get(['openrouterApiKey']);
-  if (openrouterApiKey && !currentEndpoints[OPENROUTER_ID]) {
-    currentEndpoints[OPENROUTER_ID] = { apiKey: openrouterApiKey };
-    await setEndpoints(currentEndpoints);
-  }
 
   renderEndpoints(); await renderAllModels();
   const hasEndpoints = Object.keys(currentEndpoints).length > 0;

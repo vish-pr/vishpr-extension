@@ -1,10 +1,5 @@
 // Content Script - runs on all web pages
-const ContentAction = {
-  EXTRACT_CONTENT: 'extractContent',
-  CLICK_ELEMENT: 'clickElement',
-  FILL_FORM: 'fillForm',
-  SCROLL_AND_WAIT: 'scrollAndWait'
-};
+import { ContentAction } from './modules/content-actions.js';
 
 const isMac = navigator.platform.toLowerCase().includes('mac');
 

@@ -14,19 +14,25 @@ The Extension collects and processes the following data locally on your device:
 
 1. **User Commands**: Natural language instructions you provide to automate browsing tasks
 2. **Page Content**: Text content from web pages you interact with (used to execute your commands)
-3. **API Keys**: Your OpenRouter API key (stored locally in Chrome storage)
+3. **API Keys**: Your LLM provider API key (stored locally in Chrome storage)
 4. **Chat History**: Conversation history with the Extension (stored locally)
 5. **Settings**: Your preferences and configuration options (stored locally)
 
 ### What We Send to Third Parties
 
-To process your commands, the Extension sends data to **OpenRouter** (https://openrouter.ai):
+To process your commands, the Extension sends data to **the LLM provider you configure**:
 
 - Your natural language commands
 - Relevant page content needed to execute commands
-- This data is sent using your personal OpenRouter API key
+- This data is sent using your personal API key
 
-**We do not operate any servers. All data processing happens locally or through your direct connection to OpenRouter.**
+The Extension supports any OpenAI API-compatible provider, including:
+
+- **OpenRouter** (https://openrouter.ai) — recommended for getting started
+- **Local models** (e.g., Ollama, LM Studio) — your data stays on your machine
+- **Other providers** (OpenAI, Anthropic, etc.) — connect directly with your API key
+
+**We do not operate any servers. All data processing happens locally or through your direct connection to the provider you choose. The privacy policy of your chosen provider applies to any data sent to them.**
 
 ### What We Do NOT Collect
 
@@ -46,13 +52,16 @@ All data is stored locally on your device using Chrome's built-in storage API:
 
 ## Third-Party Services
 
-### OpenRouter
+### LLM Providers
 
-The Extension uses OpenRouter as an intermediary to access various LLM providers. When you use the Extension:
+The Extension connects to the LLM provider you configure. When you use the Extension:
 
-- Your commands and relevant page content are sent to OpenRouter
-- OpenRouter's privacy policy applies: https://openrouter.ai/privacy
+- Your commands and relevant page content are sent to your chosen provider
+- **The privacy policy of your chosen provider applies** — review their terms before use
 - You must provide your own API key; we never have access to it
+- If you use a local model, your data never leaves your machine
+
+**Recommended provider for getting started:** OpenRouter (https://openrouter.ai/privacy)
 
 ## Permissions Explained
 
@@ -67,11 +76,14 @@ The Extension requires these permissions:
 | `storage` | Save your settings and API key locally |
 | `<all_urls>` | Work on any website you choose to automate |
 
+**Window Scope Limitation:** The Extension only tracks tabs within the browser window where it is opened. Tabs in other windows are not visible to or tracked by the Extension.
+
 ## Data Security
 
-- All data transmission to OpenRouter uses HTTPS encryption
+- All data transmission to cloud providers uses HTTPS encryption
 - Your API key is stored locally and never transmitted to us
 - No data is stored on external servers controlled by us
+- Using a local model ensures your data never leaves your device
 
 ## Your Rights
 
@@ -79,7 +91,7 @@ You can:
 
 - **Delete your data**: Clear Chrome's extension storage to remove all local data
 - **Revoke access**: Disable or uninstall the Extension at any time
-- **Control API access**: Revoke your OpenRouter API key to stop LLM processing
+- **Control API access**: Revoke your API key or switch to a local model to control LLM processing
 
 ## Children's Privacy
 

@@ -1,6 +1,7 @@
 /**
  * Debug Mode - Action execution with trace/critique visualization
  */
+import { renderModelStats } from './ui-settings.js';
 
 // SVG icons for consistent rendering
 const ICONS = {
@@ -34,11 +35,14 @@ export async function initDebug() {
     params: document.getElementById('debugParams'),
     history: document.getElementById('debugHistory'),
     clearBtn: document.getElementById('debugClearBtn'),
-    trace: document.getElementById('debugTrace'),
+    timeline: document.getElementById('debugTimeline'),
     timing: document.getElementById('debugTiming'),
-    critique: document.getElementById('debugCritique'),
     badge: document.getElementById('debugCritiqueBadge'),
     refreshBtn: document.getElementById('debugRefreshBtn'),
+    // Debug tabs
+    traceTab: document.getElementById('debugTraceTab'),
+    statsTab: document.getElementById('debugStatsTab'),
+    tabs: document.querySelectorAll('[data-debug-tab]'),
   };
 
   els.toggle.addEventListener('click', toggleMode);
@@ -50,8 +54,25 @@ export async function initDebug() {
   els.clearBtn.addEventListener('click', reloadTraces);
   els.refreshBtn.addEventListener('click', refreshCritique);
 
+  // Tab switching
+  els.tabs.forEach(tab => {
+    tab.addEventListener('click', () => switchDebugTab(tab.dataset.debugTab));
+  });
+
   state.tabId = await getCurrentTabId();
   await loadStoredTraces();
+}
+
+async function switchDebugTab(tabName) {
+  els.tabs.forEach(tab => {
+    tab.classList.toggle('tab-active', tab.dataset.debugTab === tabName);
+  });
+  els.traceTab.classList.toggle('hidden', tabName !== 'trace');
+  els.statsTab.classList.toggle('hidden', tabName !== 'stats');
+
+  if (tabName === 'stats') {
+    await renderModelStats();
+  }
 }
 
 async function getCurrentTabId() {
@@ -180,42 +201,98 @@ async function execute() {
 }
 
 function showRunning(run) {
-  els.trace.innerHTML = `<div class="animate-pulse">Running ${run.action}...</div>`;
-  els.critique.innerHTML = `<div class="opacity-30 text-center">Waiting...</div>`;
+  els.timeline.innerHTML = `
+    <div class="timeline-running">
+      <div class="timeline-running-pulse"></div>
+      <div class="timeline-running-text">Executing ${run.action}...</div>
+    </div>
+  `;
   els.badge.textContent = '';
 }
 
 function showError(msg) {
-  els.trace.innerHTML = `<div class="text-error">${escapeHtml(msg)}</div>`;
+  els.timeline.innerHTML = `
+    <div class="timeline-error-block">
+      <div class="timeline-error-icon">✕</div>
+      <div class="timeline-error-msg">${escapeHtml(msg)}</div>
+    </div>
+  `;
+}
+
+function renderTimeline(run) {
+  if (!run) return;
+
+  let html = '';
+
+  // Trace section as stacked block
+  if (run.trace) {
+    html += `
+      <div class="timeline-block timeline-block-trace">
+        <div class="timeline-block-header">
+          <span class="timeline-block-icon timeline-block-icon-trace">◈</span>
+          <span class="timeline-block-title">EXECUTION TRACE</span>
+          <span class="timeline-block-meta">${run.trace.duration ? formatDuration(run.trace.duration) : ''}</span>
+        </div>
+        <div class="timeline-block-content">
+          ${renderNode(run.trace, 0)}
+        </div>
+      </div>
+    `;
+  }
+
+  // Critique section as stacked block
+  html += renderCritiqueBlock(run);
+
+  els.timeline.innerHTML = html;
+
+  // Attach expand/collapse handlers for trace nodes
+  els.timeline.querySelectorAll('.trace-node').forEach(el =>
+    el.querySelector('.trace-header')?.addEventListener('click', () => el.classList.toggle('expanded'))
+  );
+
+  // Attach expand/collapse handlers for large data blocks
+  els.timeline.querySelectorAll('.trace-collapsible').forEach(el => {
+    el.querySelector('.trace-collapsible-header')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isCollapsed = el.dataset.collapsed === 'true';
+      el.dataset.collapsed = isCollapsed ? 'false' : 'true';
+    });
+  });
 }
 
 function renderTrace(trace) {
+  // Legacy compatibility - now uses renderTimeline
   if (!trace) return;
-  els.trace.innerHTML = renderNode(trace);
-  els.trace.querySelectorAll('.trace-node').forEach(el =>
-    el.querySelector('.trace-header')?.addEventListener('click', () => el.classList.toggle('expanded'))
-  );
+  const run = state.history[state.selected];
+  if (run) {
+    run.trace = trace;
+    renderTimeline(run);
+  }
 }
 
-function renderNode(node) {
+function renderNode(node, depth = 0) {
   const hasChildren = node.children?.length > 0;
   const hasDetails = node.input || node.output || node.error || node.context || node.model || node.prompt;
   const icons = { action: 'A', step: 'S', function: 'F', llm: 'L', chrome: 'C', context: '{}', iteration: '?' };
   const icon = icons[node.type] || '?';
   const statusIcon = { success: ICONS.check, error: ICONS.x, running: ICONS.dot }[node.status] || '';
   const statusClass = `trace-status-${node.status || 'pending'}`;
+  const expandedClass = depth === 0 ? 'expanded' : '';
 
   const details = [];
   if (node.model) details.push(detailRow('MODEL', node.model));
   if (node.tokens) details.push(detailRow('TOKENS', `${node.tokens.input || 0} in / ${node.tokens.output || 0} out`));
-  if (node.input) details.push(detailRow('INPUT', `<pre>${escapeHtml(JSON.stringify(node.input, null, 2))}</pre>`));
-  if (node.prompt) details.push(detailRow('PROMPT', `<pre>${escapeHtml(node.prompt)}</pre>`));
-  if (node.output) details.push(detailRow('RESULT', `<pre>${escapeHtml(JSON.stringify(node.output, null, 2))}</pre>`));
-  if (node.context) details.push(detailRow('CONTEXT', `<pre>${escapeHtml(JSON.stringify(node.context, null, 2))}</pre>`));
-  if (node.error) details.push(detailRow('ERROR', `<span class="text-error">${escapeHtml(String(node.error))}</span>`));
+  if (node.input) details.push(detailRow('INPUT', `<pre>${escapeHtml(JSON.stringify(node.input, null, 2))}</pre>`, node.input));
+  if (node.prompt) details.push(detailRow('PROMPT', `<pre>${escapeHtml(node.prompt)}</pre>`, node.prompt));
+  if (node.output) details.push(detailRow('RESULT', `<pre>${escapeHtml(JSON.stringify(node.output, null, 2))}</pre>`, node.output));
+  if (node.context) details.push(detailRow('CONTEXT', `<pre>${escapeHtml(JSON.stringify(node.context, null, 2))}</pre>`, node.context));
+  if (node.error) {
+    const errorStr = typeof node.error === 'object' ? JSON.stringify(node.error, null, 2) : String(node.error);
+    details.push(detailRow('ERROR', `<span class="text-error">${escapeHtml(errorStr)}</span>`, errorStr));
+  }
 
   return `
-    <div class="trace-node">
+    <div class="trace-node ${expandedClass}">
       <div class="trace-header">
         <span class="trace-toggle">${hasChildren || hasDetails ? ICONS.chevron : ''}</span>
         <span class="trace-icon trace-icon-${node.type || 'step'}">${icon}</span>
@@ -225,13 +302,46 @@ function renderNode(node) {
         <span class="${statusClass}">${statusIcon}</span>
       </div>
       ${details.length ? `<div class="trace-details">${details.join('')}</div>` : ''}
-      ${hasChildren ? `<div class="trace-children">${node.children.map(renderNode).join('')}</div>` : ''}
+      ${hasChildren ? `<div class="trace-children">${node.children.map(c => renderNode(c, depth + 1)).join('')}</div>` : ''}
     </div>
   `;
 }
 
-function detailRow(label, value) {
+// Thresholds for collapsible content
+const COLLAPSE_THRESHOLD = 500;  // chars before collapsing
+const PREVIEW_LENGTH = 200;      // chars to show in preview
+
+function detailRow(label, value, rawValue = null) {
+  const content = typeof rawValue === 'string' ? rawValue : (rawValue ? JSON.stringify(rawValue, null, 2) : '');
+  const isLarge = content.length > COLLAPSE_THRESHOLD;
+
+  if (isLarge) {
+    const preview = escapeHtml(content.substring(0, PREVIEW_LENGTH));
+    const fullContent = escapeHtml(content);
+    return `
+      <div class="trace-detail-row">
+        <span class="trace-detail-label">${label}</span>
+        <div class="trace-detail-value">
+          <div class="trace-collapsible" data-collapsed="true">
+            <div class="trace-collapsible-header">
+              <span class="trace-collapsible-toggle">▶</span>
+              <span class="trace-collapsible-size">${formatSize(content.length)}</span>
+            </div>
+            <pre class="trace-collapsible-preview">${preview}...</pre>
+            <pre class="trace-collapsible-full">${fullContent}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   return `<div class="trace-detail-row"><span class="trace-detail-label">${label}</span><div class="trace-detail-value">${value}</div></div>`;
+}
+
+function formatSize(chars) {
+  if (chars < 1000) return `${chars} chars`;
+  if (chars < 1000000) return `${(chars / 1000).toFixed(1)}k chars`;
+  return `${(chars / 1000000).toFixed(1)}M chars`;
 }
 
 function renderHistory() {
@@ -265,18 +375,30 @@ function selectHistory(idx) {
   state.selected = idx;
   const run = state.history[idx];
   renderHistory();
-  if (run.trace) renderTrace(run.trace);
-  else if (run.error) showError(run.error);
+  if (run.error && !run.trace) {
+    showError(run.error);
+  } else {
+    renderTimeline(run);
+  }
   els.timing.textContent = run.duration ? formatDuration(run.duration) : '';
-  renderCritique(run);
 }
 
-function renderCritique(run) {
+function renderCritiqueBlock(run) {
   if (!run?.critique) {
-    els.critique.innerHTML = '<div class="opacity-30 text-center">Generating...</div>';
     els.badge.textContent = '...';
     els.badge.className = 'badge badge-xs badge-ghost';
-    return;
+    return `
+      <div class="timeline-block timeline-block-critique timeline-block-loading">
+        <div class="timeline-block-header">
+          <span class="timeline-block-icon timeline-block-icon-critique">⬡</span>
+          <span class="timeline-block-title">ANALYSIS</span>
+          <span class="timeline-loading-indicator"></span>
+        </div>
+        <div class="timeline-block-content">
+          <div class="critique-generating">Generating critique...</div>
+        </div>
+      </div>
+    `;
   }
 
   const c = run.critique;
@@ -285,40 +407,62 @@ function renderCritique(run) {
   els.badge.className = `badge badge-xs ${issues ? 'badge-warning' : 'badge-success'}`;
 
   const sections = [
-    { key: 'prompts', label: 'PROMPTS' },
-    { key: 'efficiency', label: 'EFFICIENCY' },
-    { key: 'errors', label: 'ERRORS' },
+    { key: 'prompts', label: 'PROMPTS', icon: '◇' },
+    { key: 'efficiency', label: 'EFFICIENCY', icon: '◆' },
+    { key: 'errors', label: 'ERRORS', icon: '◈' },
   ];
 
-  els.critique.innerHTML = `
-    ${c.summary ? `<div class="critique-summary"><b>Summary:</b> ${escapeHtml(c.summary)}</div>` : ''}
-    ${c.topRecommendations?.length ? `
-      <div class="mb-4">
-        <div class="critique-section-title">TOP RECOMMENDATIONS</div>
-        <ol class="critique-recommendations">
-          ${c.topRecommendations.map((r, i) => `<li>${escapeHtml(r)}</li>`).join('')}
-        </ol>
-      </div>
-    ` : ''}
-    ${sections.map(s => {
-      const items = c[s.key]?.issues || [];
-      return items.length ? `
-        <div class="mb-4">
-          <div class="critique-section-title">${s.label} (${items.length})</div>
+  const sectionsHtml = sections.map(s => {
+    const items = c[s.key]?.issues || [];
+    return items.length ? `
+      <div class="critique-section">
+        <div class="critique-section-header">
+          <span class="critique-section-icon">${s.icon}</span>
+          <span class="critique-section-title">${s.label}</span>
+          <span class="critique-section-count">${items.length}</span>
+        </div>
+        <div class="critique-section-items">
           ${items.map(i => `
-            <div class="critique-issue critique-issue-${i.severity || 'low'}">
-              <div class="flex justify-between items-start mb-1">
-                <span class="critique-issue-location">${escapeHtml(i.location)}</span>
-                <span class="critique-issue-badge critique-issue-badge-${i.severity || 'low'}">${i.severity?.toUpperCase() || 'LOW'}</span>
+            <div class="critique-item critique-item-${i.severity || 'low'}">
+              <div class="critique-item-header">
+                <span class="critique-item-location">${escapeHtml(i.location)}</span>
+                <span class="critique-item-severity critique-item-severity-${i.severity || 'low'}">${i.severity?.toUpperCase() || 'LOW'}</span>
               </div>
-              <div class="critique-issue-problem">${escapeHtml(i.problem)}</div>
-              ${i.suggestion ? `<div class="critique-issue-suggestion"><b>Suggestion:</b> ${escapeHtml(i.suggestion)}</div>` : ''}
+              <div class="critique-item-problem">${escapeHtml(i.problem)}</div>
+              ${i.suggestion ? `<div class="critique-item-suggestion">${escapeHtml(i.suggestion)}</div>` : ''}
             </div>
           `).join('')}
         </div>
-      ` : '';
-    }).join('')}
+      </div>
+    ` : '';
+  }).join('');
+
+  return `
+    <div class="timeline-block timeline-block-critique ${issues ? 'has-issues' : 'no-issues'}">
+      <div class="timeline-block-header">
+        <span class="timeline-block-icon timeline-block-icon-critique">⬡</span>
+        <span class="timeline-block-title">ANALYSIS</span>
+        <span class="timeline-block-badge ${issues ? 'has-issues' : ''}">${issues || '✓'}</span>
+      </div>
+      <div class="timeline-block-content">
+        ${c.summary ? `<div class="critique-summary-block">${escapeHtml(c.summary)}</div>` : ''}
+        ${c.topRecommendations?.length ? `
+          <div class="critique-recommendations-block">
+            <div class="critique-recs-title">TOP RECOMMENDATIONS</div>
+            <ol class="critique-recs-list">
+              ${c.topRecommendations.map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+            </ol>
+          </div>
+        ` : ''}
+        ${sectionsHtml}
+      </div>
+    </div>
   `;
+}
+
+function renderCritique(run) {
+  // Re-render the full timeline to update critique block
+  renderTimeline(run);
 }
 
 async function refreshCritique() {
@@ -351,6 +495,8 @@ async function loadStoredTraces() {
         status: t.status, duration: t.duration, trace: t.trace, error: t.error, critique: t.critique
       }));
       renderHistory();
+      // Auto-select most recent history item
+      selectHistory(0);
     }
   } catch (e) { console.error('Load failed:', e); }
 }
@@ -360,11 +506,19 @@ async function reloadTraces() {
   if (state.history.length > 0) {
     selectHistory(0);
   } else {
-    els.trace.innerHTML = '<div class="opacity-30 text-center h-full flex items-center justify-center">Run an action to see trace</div>';
-    els.critique.innerHTML = '<div class="opacity-30 text-center h-full flex items-center justify-center">Critique appears after execution</div>';
-    els.timing.textContent = '';
-    els.badge.textContent = '';
+    showEmptyState();
   }
+}
+
+function showEmptyState() {
+  els.timeline.innerHTML = `
+    <div class="debug-empty-state">
+      <div class="debug-empty-icon">▷</div>
+      <div class="debug-empty-text">Run an action to see trace</div>
+    </div>
+  `;
+  els.timing.textContent = '';
+  els.badge.textContent = '';
 }
 
 async function deleteHistoryItem(idx) {
@@ -379,10 +533,7 @@ async function deleteHistoryItem(idx) {
     if (state.selected >= 0) {
       selectHistory(0);
     } else {
-      els.trace.innerHTML = '<div class="opacity-30 text-center h-full flex items-center justify-center">Run an action to see trace</div>';
-      els.critique.innerHTML = '<div class="opacity-30 text-center h-full flex items-center justify-center">Critique appears after execution</div>';
-      els.timing.textContent = '';
-      els.badge.textContent = '';
+      showEmptyState();
     }
   } else if (state.selected > idx) {
     state.selected--;

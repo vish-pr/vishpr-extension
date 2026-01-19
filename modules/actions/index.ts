@@ -8,6 +8,7 @@ import { finalResponseAction, FINAL_RESPONSE } from './final-response-action.js'
 import { llmAction, LLM_TOOL } from './llm-action.js';
 import { routerAction, BROWSER_ROUTER } from './router-action.js';
 import { cleanContentAction, CLEAN_CONTENT } from './clean-content-action.js';
+import { critiqueAction, CRITIQUE } from './critique-action.js';
 import logger from '../logger.js';
 
 // Re-export constants
@@ -16,6 +17,7 @@ export { LLM_TOOL } from './llm-action.js';
 export { BROWSER_ROUTER } from './router-action.js';
 export { BROWSER_ACTION } from './browser-actions.js';
 export { CLEAN_CONTENT } from './clean-content-action.js';
+export { CRITIQUE } from './critique-action.js';
 
 // Re-export types
 export type { Action, ActionsRegistry, StepResult, StepContext, Message } from './types/index.js';
@@ -27,7 +29,8 @@ const allActions: Action[] = [
   llmAction,
   routerAction,
   browserActionRouter,
-  cleanContentAction
+  cleanContentAction,
+  critiqueAction
 ];
 
 export const actionsRegistry: ActionsRegistry = Object.fromEntries(

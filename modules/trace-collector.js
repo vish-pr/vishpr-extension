@@ -133,8 +133,8 @@ class TraceRouter {
       type: 'llm',
       name: 'LLM Call',
       model,
-      prompt: this.truncate(prompt, 2000),
-      output: this.sanitize(response),
+      prompt: prompt,
+      output: this.sanitizeDeep(response),
       tokens,
       duration,
       status: error ? 'error' : 'success',
@@ -225,32 +225,35 @@ class TraceRouter {
     }
   }
 
+  /**
+   * Sanitize value - preserve full data, only handle non-serializable types
+   */
   sanitize(value) {
     if (value === undefined || value === null) return value;
     try {
-      const str = JSON.stringify(value, (key, val) => {
-        if (typeof val === 'string' && val.length > 10000) return `[String: ${val.length} chars]`;
+      return JSON.parse(JSON.stringify(value, (key, val) => {
         if (typeof val === 'function') return '[Function]';
+        if (val instanceof Error) return { message: val.message, name: val.name, stack: val.stack };
         return val;
-      });
-      if (str.length > 50000) return JSON.parse(str.substring(0, 50000) + '..."}}');
-      return JSON.parse(str);
+      }));
     } catch (err) {
       return `[Unable to serialize: ${err.message}]`;
     }
   }
 
+  /**
+   * Deep sanitize - same as sanitize, preserves all data
+   */
+  sanitizeDeep(value) {
+    return this.sanitize(value);
+  }
+
   sanitizeError(error) {
     if (typeof error === 'string') return error;
     if (error instanceof Error) {
-      return { message: error.message, name: error.name, stack: error.stack?.split('\n').slice(0, 5).join('\n') };
+      return { message: error.message, name: error.name, stack: error.stack };
     }
     return String(error);
-  }
-
-  truncate(str, maxLength) {
-    if (typeof str !== 'string') str = JSON.stringify(str);
-    return str.length <= maxLength ? str : str.substring(0, maxLength) + '... [truncated]';
   }
 }
 

@@ -31,14 +31,38 @@ class ChromeAPI {
     this.tabs = new Map();
     this.currentTabId = null;
     this.currentTabUrl = null;
+    this.windowId = null;
     this._readyPromise = null;
     this._initTabListeners();
+  }
+
+  setWindowId(windowId) {
+    this.windowId = windowId;
+    this._initCurrentTab();
+  }
+
+  async _persistState() {
+    try {
+      const stateJSON = this.toJSON();
+      await chrome.storage.session.set({ browserState: stateJSON });
+    } catch (error) {
+      console.warn('Failed to persist browser state:', error.message);
+    }
   }
 
   ready() { return this._readyPromise || Promise.resolve(); }
 
   _initTabListeners() {
-    chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+    chrome.tabs.onCreated.addListener(async (tab) => {
+      if (this.windowId && tab.windowId !== this.windowId) return;
+      if (tab.id && tab.url) {
+        this._ensureTab(tab.id, tab.url);
+        this._persistState();
+      }
+    });
+
+    chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+      if (this.windowId && windowId !== this.windowId) return;
       this.currentTabId = tabId;
       try {
         const tab = await chrome.tabs.get(tabId);
@@ -46,20 +70,51 @@ class ChromeAPI {
         this._ensureTab(tabId, tab.url);
         const tabState = this.tabs.get(tabId);
         if (tabState) tabState.lastVisitedAt = new Date().toISOString();
+        this._persistState();
       } catch (e) {
         console.warn('Failed to get tab info on activation:', e.message);
       }
     });
 
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-      if (tabId === this.currentTabId && changeInfo.url) {
-        this.currentTabUrl = changeInfo.url;
+    chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+      if (this.windowId) {
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          if (tab.windowId !== this.windowId) return;
+        } catch { return; }
+      }
+      if (changeInfo.url) {
+        if (tabId === this.currentTabId) {
+          this.currentTabUrl = changeInfo.url;
+        }
         this._ensureTab(tabId, changeInfo.url);
+        this._persistState();
       }
     });
 
-    chrome.tabs.onRemoved.addListener((tabId) => {
+    chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+      if (this.windowId && removeInfo.windowId !== this.windowId) return;
       this.tabs.delete(tabId);
+      this._persistState();
+    });
+
+    chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
+      if (this.windowId) {
+        try {
+          const tab = await chrome.tabs.get(addedTabId);
+          if (tab.windowId !== this.windowId) return;
+        } catch { return; }
+      }
+      const oldTab = this.tabs.get(removedTabId);
+      if (oldTab) {
+        oldTab.tabId = addedTabId;
+        this.tabs.set(addedTabId, oldTab);
+        this.tabs.delete(removedTabId);
+      }
+      if (this.currentTabId === removedTabId) {
+        this.currentTabId = addedTabId;
+      }
+      this._persistState();
     });
 
     this._initCurrentTab();
@@ -68,15 +123,31 @@ class ChromeAPI {
   _initCurrentTab() {
     this._readyPromise = (async () => {
       try {
-        let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab) [tab] = await chrome.tabs.query({ active: true });
-        if (tab) {
-          this.currentTabId = tab.id;
-          this.currentTabUrl = tab.url;
-          this._ensureTab(tab.id, tab.url);
+        // Clear existing tabs when reinitializing
+        this.tabs.clear();
+
+        // Load tabs from current window only
+        const query = this.windowId ? { windowId: this.windowId } : {};
+        const allTabs = await chrome.tabs.query(query);
+        for (const tab of allTabs) {
+          if (tab.id && tab.url) {
+            this._ensureTab(tab.id, tab.url);
+          }
         }
+
+        // Set current active tab
+        const activeQuery = this.windowId
+          ? { active: true, windowId: this.windowId }
+          : { active: true, currentWindow: true };
+        let [activeTab] = await chrome.tabs.query(activeQuery);
+        if (activeTab) {
+          this.currentTabId = activeTab.id;
+          this.currentTabUrl = activeTab.url;
+        }
+
+        this._persistState();
       } catch (e) {
-        console.warn('Failed to initialize current tab:', e.message);
+        console.warn('Failed to initialize tabs:', e.message);
       }
     })();
   }
@@ -97,6 +168,9 @@ class ChromeAPI {
       if (tab.url !== url) {
         tab.url = url;
         tab.urlHistory.push({ url, timestamp: now });
+        if (tab.urlHistory.length > 5) {
+          tab.urlHistory = tab.urlHistory.slice(-5);
+        }
       }
     }
     return this.tabs.get(tabId);
@@ -120,13 +194,16 @@ class ChromeAPI {
   // --- Serialization (for persistence) ---
 
   toJSON() {
-    const json = { tabs: {} };
+    const json = { windowId: this.windowId, tabs: {} };
     for (const [tabId, tab] of this.tabs) json.tabs[tabId] = tab;
     return json;
   }
 
   fromJSON(json) {
     this.tabs.clear();
+    if (json?.windowId) {
+      this.windowId = json.windowId;
+    }
     if (json?.tabs) {
       Object.entries(json.tabs).forEach(([id, tab]) => this.tabs.set(+id, tab));
     }

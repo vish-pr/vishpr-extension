@@ -172,7 +172,10 @@ async function renderModelStats() {
   const container = elements.modelStatsContainer;
   container.innerHTML = '';
 
-  const models = Object.keys(allStats);
+  // Filter to models used in the last week
+  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const models = Object.keys(allStats).filter(m => (allStats[m]._lastActivity || 0) >= oneWeekAgo);
+
   if (!models.length) {
     container.innerHTML = '<div class="text-center py-8 opacity-50"><svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg><p class="text-xs">No model stats yet</p><p class="text-[10px] opacity-60 mt-1">Stats appear after models are used</p></div>';
     return;

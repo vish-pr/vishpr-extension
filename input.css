@@ -236,58 +236,264 @@ body { @apply flex flex-col; }
 
 .trace-children { @apply hidden pl-4; }
 
-/* Critique styling */
-.critique-card {
-  @apply p-3 rounded-lg mb-2;
-  background: oklch(var(--b2));
+/* Collapsible large data blocks */
+.trace-collapsible {
+  @apply rounded overflow-hidden;
   border: 1px solid oklch(var(--bc) / 0.1);
 }
-.critique-card-header {
-  @apply flex items-center justify-between mb-2 pb-2;
-  border-bottom: 1px solid oklch(var(--bc) / 0.1);
-}
-.critique-summary {
-  @apply p-3 rounded mb-3;
+
+.trace-collapsible-header {
+  @apply flex items-center gap-2 px-2 py-1.5 cursor-pointer;
   background: oklch(var(--b3));
+  &:hover { background: oklch(var(--bc) / 0.08); }
 }
 
-.critique-section-title {
-  @apply text-[10px] font-semibold uppercase tracking-wider opacity-50 mb-2;
+.trace-collapsible-toggle {
+  @apply text-[10px] transition-transform duration-150;
+  color: oklch(var(--bc) / 0.5);
 }
 
-.critique-issue {
-  @apply p-3 rounded-lg mb-2;
-  border-left: 3px solid;
+.trace-collapsible[data-collapsed="false"] .trace-collapsible-toggle {
+  transform: rotate(90deg);
 }
-.critique-issue-high {
-  border-color: var(--dbg-error);
-  background: rgba(239, 68, 68, 0.08);
+
+.trace-collapsible-size {
+  @apply text-[10px] font-mono px-1.5 py-0.5 rounded;
+  background: oklch(var(--bc) / 0.1);
+  color: oklch(var(--bc) / 0.6);
 }
-.critique-issue-medium {
-  border-color: var(--dbg-warning);
-  background: rgba(234, 179, 8, 0.08);
+
+.trace-collapsible-preview,
+.trace-collapsible-full {
+  @apply whitespace-pre-wrap break-words p-2 m-0 text-xs;
+  background: oklch(var(--b2));
+  max-height: 60vh;
+  overflow: auto;
 }
-.critique-issue-low {
-  border-color: var(--dbg-action);
-  background: rgba(59, 130, 246, 0.05);
+
+/* Collapsed state: show preview, hide full */
+.trace-collapsible[data-collapsed="true"] .trace-collapsible-preview { @apply block; }
+.trace-collapsible[data-collapsed="true"] .trace-collapsible-full { @apply hidden; }
+
+/* Expanded state: hide preview, show full */
+.trace-collapsible[data-collapsed="false"] .trace-collapsible-preview { @apply hidden; }
+.trace-collapsible[data-collapsed="false"] .trace-collapsible-full { @apply block; }
+
+/* ==========================================================================
+   Stacked Timeline - Industrial Data Stream
+   ========================================================================== */
+
+#debugTimeline {
+  @apply p-2;
+  background: linear-gradient(180deg, oklch(var(--b1)) 0%, oklch(var(--b2) / 0.5) 100%);
 }
-.critique-issue-location {
-  @apply font-medium mb-1;
+
+/* Empty state */
+.debug-empty-state {
+  @apply flex flex-col items-center justify-center h-full py-16;
 }
-.critique-issue-problem {
-  @apply opacity-80 mb-2;
+.debug-empty-icon {
+  @apply text-4xl opacity-10 mb-3;
+  font-family: 'JetBrains Mono', monospace;
 }
-.critique-issue-suggestion {
+.debug-empty-text {
+  @apply text-xs opacity-30 uppercase tracking-widest;
+}
+
+/* Running state */
+.timeline-running {
+  @apply flex items-center gap-4 p-6;
+}
+.timeline-running-pulse {
+  @apply w-3 h-3 rounded-full;
+  background: var(--dbg-warning);
+  animation: runningPulse 1.2s ease-in-out infinite;
+}
+@keyframes runningPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+.timeline-running-text {
+  @apply text-xs uppercase tracking-wider opacity-60;
+}
+
+/* Error block */
+.timeline-error-block {
+  @apply flex items-start gap-3 p-4 m-2 rounded-lg;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.timeline-error-icon {
+  @apply text-lg font-bold shrink-0;
+  color: var(--dbg-error);
+}
+.timeline-error-msg {
+  @apply text-xs break-words;
+  color: oklch(0.75 0.08 25);
+}
+
+/* Timeline blocks - stacked entries */
+.timeline-block {
+  @apply mb-3 rounded-lg overflow-hidden;
+  border: 1px solid oklch(var(--bc) / 0.08);
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.1);
+}
+
+.timeline-block-header {
+  @apply flex items-center gap-2 px-3 py-2;
+  background: oklch(var(--b2));
+  border-bottom: 1px solid oklch(var(--bc) / 0.08);
+}
+
+.timeline-block-icon {
+  @apply text-sm font-bold;
+}
+.timeline-block-icon-trace { color: var(--dbg-action); }
+.timeline-block-icon-critique { color: var(--dbg-llm); }
+
+.timeline-block-title {
+  @apply text-[10px] font-bold uppercase tracking-widest flex-1;
+  color: oklch(var(--bc) / 0.5);
+}
+
+.timeline-block-meta {
+  @apply text-[10px] font-mono;
+  color: oklch(var(--bc) / 0.4);
+}
+
+.timeline-block-badge {
+  @apply text-[10px] font-bold px-2 py-0.5 rounded;
+  background: var(--dbg-success);
+  color: white;
+}
+.timeline-block-badge.has-issues {
+  background: var(--dbg-warning);
+  color: black;
+}
+
+.timeline-loading-indicator {
+  @apply w-2 h-2 rounded-full;
+  background: var(--dbg-llm);
+  animation: loadingBlink 1s ease-in-out infinite;
+}
+@keyframes loadingBlink {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+
+.timeline-block-content {
+  @apply p-2;
+  background: oklch(var(--b1));
+}
+
+/* Trace block specific */
+.timeline-block-trace .timeline-block-header {
+  background: linear-gradient(90deg, oklch(var(--b2)) 0%, rgba(59, 130, 246, 0.08) 100%);
+}
+
+/* Critique block specific */
+.timeline-block-critique .timeline-block-header {
+  background: linear-gradient(90deg, oklch(var(--b2)) 0%, rgba(139, 92, 246, 0.08) 100%);
+}
+.timeline-block-critique.no-issues .timeline-block-header {
+  background: linear-gradient(90deg, oklch(var(--b2)) 0%, rgba(34, 197, 94, 0.08) 100%);
+}
+
+.critique-generating {
+  @apply text-xs text-center py-4 opacity-40;
+}
+
+.critique-summary-block {
+  @apply p-3 mb-3 rounded text-xs leading-relaxed;
+  background: oklch(var(--b3));
+  border-left: 2px solid var(--dbg-llm);
+}
+
+.critique-recommendations-block {
+  @apply mb-4 p-3 rounded;
+  background: oklch(var(--b2) / 0.5);
+}
+.critique-recs-title {
+  @apply text-[9px] font-bold uppercase tracking-widest mb-2;
   color: var(--dbg-warning);
 }
-.critique-issue-badge {
-  @apply text-[10px] font-bold uppercase px-2 py-0.5 rounded;
+.critique-recs-list {
+  @apply list-decimal list-inside space-y-1 text-xs;
+  color: oklch(var(--bc) / 0.8);
 }
-.critique-issue-badge-high { background: var(--dbg-error); color: white; }
-.critique-issue-badge-medium { background: var(--dbg-warning); color: black; }
-.critique-issue-badge-low { background: var(--dbg-action); color: white; }
+.critique-recs-list li::marker {
+  color: var(--dbg-warning);
+  font-weight: bold;
+}
 
-.critique-recommendations {
-  @apply list-decimal list-inside space-y-1;
+/* Critique sections */
+.critique-section {
+  @apply mb-3;
+}
+.critique-section-header {
+  @apply flex items-center gap-2 mb-2 pb-1;
+  border-bottom: 1px dashed oklch(var(--bc) / 0.1);
+}
+.critique-section-icon {
+  @apply text-xs opacity-50;
+}
+.critique-section-title {
+  @apply text-[9px] font-bold uppercase tracking-widest flex-1;
+  color: oklch(var(--bc) / 0.5);
+}
+.critique-section-count {
+  @apply text-[10px] font-mono px-1.5 rounded;
+  background: oklch(var(--bc) / 0.1);
+  color: oklch(var(--bc) / 0.6);
+}
+
+/* Critique items */
+.critique-section-items {
+  @apply space-y-2;
+}
+.critique-item {
+  @apply p-3 rounded text-xs;
+  border-left: 3px solid;
+}
+.critique-item-high {
+  border-color: var(--dbg-error);
+  background: rgba(239, 68, 68, 0.06);
+}
+.critique-item-medium {
+  border-color: var(--dbg-warning);
+  background: rgba(234, 179, 8, 0.06);
+}
+.critique-item-low {
+  border-color: var(--dbg-action);
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.critique-item-header {
+  @apply flex justify-between items-start gap-2 mb-1;
+}
+.critique-item-location {
+  @apply font-medium text-[10px] uppercase tracking-wide;
+  color: oklch(var(--bc) / 0.7);
+}
+.critique-item-severity {
+  @apply text-[9px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0;
+}
+.critique-item-severity-high { background: var(--dbg-error); color: white; }
+.critique-item-severity-medium { background: var(--dbg-warning); color: black; }
+.critique-item-severity-low { background: var(--dbg-action); color: white; }
+
+.critique-item-problem {
+  @apply mb-2 leading-relaxed;
+  color: oklch(var(--bc) / 0.8);
+}
+.critique-item-suggestion {
+  @apply text-[10px] italic pt-2 mt-2;
+  color: oklch(var(--bc) / 0.6);
+  border-top: 1px dashed oklch(var(--bc) / 0.1);
+}
+.critique-item-suggestion::before {
+  content: "→ ";
+  color: var(--dbg-success);
+  font-style: normal;
 }
 
