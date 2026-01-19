@@ -182,7 +182,7 @@ async function execute() {
     run.trace = res.trace;
     run.error = res.error;
     run.duration = res.trace?.duration;
-    renderTrace(res.trace);
+    renderTimeline(run);
     els.timing.textContent = formatDuration(run.duration);
   } catch (err) {
     run.status = 'error';
@@ -258,16 +258,6 @@ function renderTimeline(run) {
       el.dataset.collapsed = isCollapsed ? 'false' : 'true';
     });
   });
-}
-
-function renderTrace(trace) {
-  // Legacy compatibility - now uses renderTimeline
-  if (!trace) return;
-  const run = state.history[state.selected];
-  if (run) {
-    run.trace = trace;
-    renderTimeline(run);
-  }
 }
 
 function renderNode(node, depth = 0) {
@@ -460,11 +450,6 @@ function renderCritiqueBlock(run) {
   `;
 }
 
-function renderCritique(run) {
-  // Re-render the full timeline to update critique block
-  renderTimeline(run);
-}
-
 async function refreshCritique() {
   if (state.selected < 0) return;
   const run = state.history[state.selected];
@@ -478,7 +463,7 @@ async function refreshCritique() {
     if (res.trace?.critique) {
       run.critique = res.trace.critique;
     }
-    renderCritique(run);
+    renderTimeline(run);
   } catch (e) {
     els.badge.textContent = '!';
     els.badge.className = 'badge badge-xs badge-error';

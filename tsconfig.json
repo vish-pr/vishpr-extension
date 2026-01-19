@@ -9,6 +9,7 @@
     "checkJs": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "downlevelIteration": true,
     "declaration": true,
     "declarationDir": "./types",
     "outDir": "./dist",

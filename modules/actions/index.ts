@@ -1,7 +1,7 @@
 /**
  * Actions registry - central export for all actions
  */
-import Mustache from 'mustache';
+import mustache from 'mustache';
 import type { Action, ActionsRegistry, LLMStep, StepContext } from './types/index.js';
 import { browserActions, browserActionRouter } from './browser-actions.js';
 import { finalResponseAction, FINAL_RESPONSE } from './final-response-action.js';
@@ -66,7 +66,7 @@ export function resolveStepTemplates(step: LLMStep): ResolvedTemplates {
     : '';
 
   const render = (template: string, ctx: StepContext): string =>
-    Mustache.render(template, { ...ctx, decisionGuide });
+    mustache.render(template, { ...ctx, decisionGuide });
 
   return {
     systemPrompt: (ctx: StepContext) => render(step.system_prompt, ctx),

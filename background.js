@@ -72,40 +72,28 @@ async function handleUserMessage({ message }) {
     const trace = tracer.getTrace(traceUUID);
 
     logger.info('Execution trace', { runId, traceUUID });
-
-    await storeTrace({
-      runId,
-      timestamp: new Date().toISOString(),
-      actionName: BROWSER_ROUTER,
-      params: { user_message: message },
-      status: 'success',
-      duration: trace?.duration,
-      trace,
-      critique: null,
-    });
-
+    await storeSuccessTrace(runId, BROWSER_ROUTER, { user_message: message }, trace);
     runCritiqueAsync(runId, trace);
     tracer.cleanup(traceUUID); // Free memory
 
     return unwrapFinalAnswer(result);
   } catch (error) {
-    // On error, we may not have a trace UUID
     logger.error('Execution failed', { runId, error: error.message });
-
-    await storeTrace({
-      runId,
-      timestamp: new Date().toISOString(),
-      actionName: BROWSER_ROUTER,
-      params: { user_message: message },
-      status: 'error',
-      error: error.message,
-      trace: null,
-      critique: null,
-    });
-
+    await storeErrorTrace(runId, BROWSER_ROUTER, { user_message: message }, error.message);
     throw error;
   }
 }
+
+// Trace storage helpers
+const storeSuccessTrace = (runId, actionName, params, trace) => storeTrace({
+  runId, timestamp: new Date().toISOString(), actionName, params,
+  status: 'success', duration: trace?.duration, trace, critique: null,
+});
+
+const storeErrorTrace = (runId, actionName, params, errorMessage) => storeTrace({
+  runId, timestamp: new Date().toISOString(), actionName, params,
+  status: 'error', error: errorMessage, trace: null, critique: null,
+});
 
 // Non-blocking critique runner (fire-and-forget)
 async function runCritiqueAsync(runId, trace) {
@@ -145,43 +133,15 @@ async function handleDebugExecute({ actionName, params, runId }) {
     const trace = tracer.getTrace(traceUUID);
 
     logger.info('Execution trace', { runId, traceUUID });
-
-    await storeTrace({
-      runId,
-      timestamp: new Date().toISOString(),
-      actionName,
-      params: params || {},
-      status: 'success',
-      duration: trace?.duration,
-      trace,
-      critique: null,
-    });
-
+    await storeSuccessTrace(runId, actionName, params || {}, trace);
     runCritiqueAsync(runId, trace);
     tracer.cleanup(traceUUID);
 
-    return {
-      result: result.result,
-      trace,
-    };
+    return { result: result.result, trace };
   } catch (error) {
     logger.error('Execution failed', { runId, error: error.message });
-
-    await storeTrace({
-      runId,
-      timestamp: new Date().toISOString(),
-      actionName,
-      params: params || {},
-      status: 'error',
-      error: error.message,
-      trace: null,
-      critique: null,
-    });
-
-    return {
-      error: error.message,
-      trace: null,
-    };
+    await storeErrorTrace(runId, actionName, params || {}, error.message);
+    return { error: error.message, trace: null };
   }
 }
 
