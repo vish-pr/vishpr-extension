@@ -1,6 +1,10 @@
-# Vishpr Browser Agent
+# vishpr Browser Agent
 
 Chrome extension that automates web browsing through natural language using LLMs via OpenRouter.
+
+## Install
+
+Download the latest `vishpr-extension-*.zip` from [Releases](https://github.com/vish-pr/vishpr-extension/releases), unzip, and load in `chrome://extensions/` with Developer mode enabled.
 
 ## Architecture
 
