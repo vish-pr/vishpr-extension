@@ -3,7 +3,7 @@
  */
 
 import logger from '../logger.js';
-import { getModelStatsCounter, modelStatsKey } from '../time-bucket-counter.js';
+import { getModelStatsCounter, modelStatsKey } from '../debug/time-bucket-counter.js';
 import { OPENROUTER_ID } from './endpoints.js';
 
 // Model tuple: [endpoint, model, openrouterProvider, noToolChoice]

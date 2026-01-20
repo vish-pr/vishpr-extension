@@ -22,8 +22,9 @@ export const elements = {
   settingsModelsTab: document.getElementById('settingsModelsTab'),
   settingsUiTab: document.getElementById('settingsUiTab'),
 
-  // Model stats (in debug panel)
+  // Stats (in debug panel)
   modelStatsContainer: document.getElementById('modelStatsContainer'),
+  actionStatsContainer: document.getElementById('actionStatsContainer'),
 
   // UI settings
   themeSelector: document.getElementById('themeSelector'),

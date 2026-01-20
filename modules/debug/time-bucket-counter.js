@@ -22,6 +22,11 @@ export class TimeBucketCounter {
     this.loaded = true;
   }
 
+  async reload() {
+    this.loaded = false;
+    await this.load();
+  }
+
   async save() {
     if (this.storage) await this.storage.set({ [this.storageKey]: this.data });
   }
@@ -125,6 +130,15 @@ export function modelStatsKey(endpoint, model, openrouterProvider) {
 
 export function getModelStatsCounter() {
   return modelStatsCounter ??= new TimeBucketCounter('modelStatsV2', {
+    get: keys => chrome.storage.local.get(keys),
+    set: items => chrome.storage.local.set(items)
+  });
+}
+
+let actionStatsCounter = null;
+
+export function getActionStatsCounter() {
+  return actionStatsCounter ??= new TimeBucketCounter('actionStatsV2', {
     get: keys => chrome.storage.local.get(keys),
     set: items => chrome.storage.local.set(items)
   });

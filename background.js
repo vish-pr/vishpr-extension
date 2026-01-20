@@ -4,7 +4,7 @@ import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
 import { getAction, BROWSER_ROUTER, actionsRegistry } from './modules/actions/index.js';
 import logger from './modules/logger.js';
 import { getChromeAPI } from './modules/chrome-api.js';
-import { getTraces, getTraceById, deleteTrace } from './modules/trace-collector.js';
+import { getTraces, getTraceById, deleteTrace } from './modules/debug/trace-collector.js';
 
 // Enable side panel on extension icon click
 chrome.action.onClicked.addListener(async (tab) => {

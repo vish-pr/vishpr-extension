@@ -1,7 +1,9 @@
 /**
  * Debug Mode - Action execution with trace/critique visualization
  */
-import { renderModelStats } from './ui-settings.js';
+import { renderModelStats, renderActionStats } from '../ui-settings.js';
+import { getModelStatsCounter, getActionStatsCounter } from './time-bucket-counter.js';
+import { getChatStatus } from '../chat.js';
 
 // SVG icons for consistent rendering
 const ICONS = {
@@ -63,6 +65,7 @@ export async function initDebug() {
     traceTab: document.getElementById('debugTraceTab'),
     statsTab: document.getElementById('debugStatsTab'),
     tabs: document.querySelectorAll('[data-debug-tab]'),
+    statsRefreshBtn: document.getElementById('debugStatsRefreshBtn'),
   };
 
   els.toggle.addEventListener('click', toggleMode);
@@ -79,6 +82,9 @@ export async function initDebug() {
     tab.addEventListener('click', () => switchDebugTab(tab.dataset.debugTab));
   });
 
+  // Stats refresh
+  els.statsRefreshBtn.addEventListener('click', refreshStats);
+
   state.tabId = await getCurrentTabId();
   await loadStoredTraces();
 }
@@ -91,7 +97,23 @@ async function switchDebugTab(tabName) {
   els.statsTab.classList.toggle('hidden', tabName !== 'stats');
 
   if (tabName === 'stats') {
-    await renderModelStats();
+    await Promise.all([renderModelStats(), renderActionStats()]);
+  }
+}
+
+async function refreshStats() {
+  els.statsRefreshBtn.disabled = true;
+  els.statsRefreshBtn.classList.add('loading', 'loading-spinner');
+  try {
+    // Force reload from storage
+    await Promise.all([
+      getModelStatsCounter().reload(),
+      getActionStatsCounter().reload()
+    ]);
+    await Promise.all([renderModelStats(), renderActionStats()]);
+  } finally {
+    els.statsRefreshBtn.disabled = false;
+    els.statsRefreshBtn.classList.remove('loading', 'loading-spinner');
   }
 }
 
@@ -105,7 +127,23 @@ function toggleMode() {
   els.chat.classList.toggle('hidden', !isDebug);
   els.inputArea.classList.toggle('hidden', !isDebug);
   els.toggle.classList.toggle('btn-active', !isDebug);
-  document.getElementById('statusText').textContent = isDebug ? 'Ready' : 'Debug Mode';
+
+  const statusText = document.getElementById('statusText');
+  const statusDot = document.getElementById('statusDot');
+  if (isDebug) {
+    // Switching to chat mode - restore chat status
+    const { text, dotActive } = getChatStatus();
+    statusText.textContent = text;
+    if (statusDot) {
+      statusDot.classList.toggle('active', dotActive);
+    }
+  } else {
+    // Switching to debug mode
+    statusText.textContent = 'Debug Mode';
+    if (statusDot) {
+      statusDot.classList.remove('active');
+    }
+  }
 }
 
 function onInput(e) {
@@ -283,11 +321,11 @@ function renderTimeline(run) {
 
 function renderNode(node, depth = 0) {
   const hasChildren = node.children?.length > 0;
-  const hasDetails = node.input || node.output || node.error || node.context || node.model || node.prompt;
+  const hasDetails = node.input || node.output || node.error || node.context || node.model || node.prompt || node.status === 'skipped';
   const icons = { action: 'A', step: 'S', function: 'F', llm: 'L', chrome: 'C', context: '{}', warning: '!', iteration: '↻' };
   const icon = icons[node.type] || '?';
   if (icon === '?') console.warn('Unknown node type:', node);
-  const statusIcon = { success: ICONS.check, error: ICONS.x, running: ICONS.dot }[node.status] || '';
+  const statusIcon = { success: ICONS.check, error: ICONS.x, running: ICONS.dot, skipped: '⏭' }[node.status] || '';
   const statusClass = `trace-status-${node.status || 'pending'}`;
   const expandedClass = depth === 0 ? 'expanded' : '';
 
@@ -321,6 +359,9 @@ function renderNode(node, depth = 0) {
   if (node.error) {
     const errorStr = typeof node.error === 'object' ? JSON.stringify(node.error, null, 2) : String(node.error);
     details.push(detailRow('ERROR', `<span class="text-error">${escapeHtml(errorStr)}</span>`));
+  }
+  if (node.status === 'skipped') {
+    details.push(detailRow('RESULT', '<span class="opacity-50">Skipped (condition met)</span>'));
   }
 
   // For actions, add data attribute to enable polling if still running

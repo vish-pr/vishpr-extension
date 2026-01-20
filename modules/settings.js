@@ -1,6 +1,5 @@
 // Settings Management
 import { elements } from './dom.js';
-import * as storage from './storage.js';
 import { addMessage } from './chat.js';
 import {
   setApiKey,
@@ -17,7 +16,7 @@ import {
   PREDEFINED_ENDPOINTS,
   OPENROUTER_ID
 } from './llm/index.js';
-import { getModelStatsCounter, modelStatsKey } from './time-bucket-counter.js';
+import { getModelStatsCounter, modelStatsKey } from './debug/time-bucket-counter.js';
 import Sortable from 'sortablejs';
 import { matchSorter } from 'match-sorter';
 

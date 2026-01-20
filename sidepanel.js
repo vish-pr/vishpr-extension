@@ -2,7 +2,7 @@
 import { initSettings } from './modules/settings.js';
 import { initUiSettings } from './modules/ui-settings.js';
 import { initChat } from './modules/chat.js';
-import { initDebug } from './modules/debug.js';
+import { initDebug } from './modules/debug/index.js';
 
 async function init() {
   await initUiSettings();

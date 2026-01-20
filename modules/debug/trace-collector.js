@@ -224,7 +224,8 @@ export const tracer = {
   },
 
   endStep(actionUUID, stepIndex, startTime, output, error = null) {
-    persistEvent(actionUUID, { type: 'step_end', stepIndex, duration: performance.now() - startTime, output: sanitize(output), status: error ? 'error' : 'success', error: error ? sanitizeError(error) : undefined });
+    const status = error ? 'error' : output?.skipped ? 'skipped' : 'success';
+    persistEvent(actionUUID, { type: 'step_end', stepIndex, duration: performance.now() - startTime, output: sanitize(output), status, error: error ? sanitizeError(error) : undefined });
   },
 
   traceLLM(actionUUID, stepIndex, model, prompt, response, duration, turn = null, maxTurns = null, error = null) {

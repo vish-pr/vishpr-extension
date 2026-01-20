@@ -159,6 +159,44 @@ body { @apply flex flex-col; }
   background: oklch(var(--bc) / 0.08);
 }
 
+/* Action Stats Cards */
+.action-stat-card {
+  transition: border-color 0.15s ease;
+  &:hover {
+    border-color: oklch(var(--bc) / 0.15);
+  }
+}
+
+.action-card-header {
+  user-select: none;
+}
+
+.action-stat-card.expanded .action-expand-icon {
+  transform: rotate(180deg);
+}
+
+/* Choice distribution bars */
+.choice-bar-fill {
+  min-width: 2px;
+}
+
+/* Skip condition bars - stacked horizontal */
+.skip-bar-track {
+  min-height: 4px;
+}
+
+/* Anomaly badges */
+.anomaly-badge {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stats section headers */
+.stats-section {
+  & > .flex.items-center {
+    letter-spacing: 0.05em;
+  }
+}
+
 /* ==========================================================================
    Debug Panel - Industrial Terminal Aesthetic
    ========================================================================== */
@@ -214,6 +252,7 @@ body { @apply flex flex-col; }
 .trace-status-success { color: var(--dbg-success); }
 .trace-status-error { color: var(--dbg-error); }
 .trace-status-running { color: var(--dbg-warning); animation: pulse 1s infinite; }
+.trace-status-skipped { @apply opacity-50; }
 
 /* Trace details */
 .trace-details {

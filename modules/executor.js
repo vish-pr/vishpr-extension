@@ -5,7 +5,8 @@
 import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
 import { actionsRegistry, resolveStepTemplates, CRITIQUE } from './actions/index.js';
-import { tracer, getTraceById } from './trace-collector.js';
+import { tracer, getTraceById } from './debug/trace-collector.js';
+import { getActionStatsCounter } from './debug/time-bucket-counter.js';
 
 const TIMEOUT_MS = 20000;
 
@@ -70,7 +71,7 @@ export async function executeAction(action, params, parent_messages = null, trac
           break;
         }
         case 'llm': {
-          stepOutput = await executeLLMStep(step, context, actionUUID, i);
+          stepOutput = await executeLLMStep(step, context, actionUUID, i, action.name);
           break;
         }
         case 'action': {
@@ -98,6 +99,7 @@ export async function executeAction(action, params, parent_messages = null, trac
     } catch (error) {
       tracer.endStep(actionUUID, i, stepStartTime, null, error);
       tracer.endAction(actionUUID, startTime, null, error);
+      getActionStatsCounter().increment(action.name, 'errors').catch(() => {});
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
     }
   }
@@ -108,6 +110,9 @@ export async function executeAction(action, params, parent_messages = null, trac
   };
 
   const endEvent = tracer.endAction(actionUUID, startTime, result);
+
+  // Track action stats (fire-and-forget)
+  getActionStatsCounter().increment(action.name, 'executions').catch(() => {});
 
   // Only return trace info for root action (no parent)
   if (!traceUUID) {
@@ -133,7 +138,7 @@ async function runCritiqueAsync(parentUUID) {
   }
 }
 
-async function executeLLMStep(step, context, actionUUID, stepIndex) {
+async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) {
   const { intelligence, output_schema, tool_choice, skip_if } = step;
   const current_datetime = new Date().toLocaleString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -141,8 +146,10 @@ async function executeLLMStep(step, context, actionUUID, stepIndex) {
   });
   context = { ...context, browser_state: await getBrowserStateBundle(), current_datetime, stop_action: tool_choice?.stop_action };
 
-  if (skip_if && skip_if(context)) {
-    return {};
+  if (skip_if) {
+    const skipped = skip_if(context);
+    getActionStatsCounter().increment(`${actionName}:step${stepIndex}`, skipped ? 'skipped' : 'notSkipped').catch(() => {});
+    if (skipped) return { skipped: true };
   }
 
   const { systemPrompt, renderMessage } = resolveStepTemplates(step);
@@ -171,6 +178,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex) {
 
     if (!response.tool_calls?.length) {
       tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: response.content });
+      getActionStatsCounter().increment(actionName, 'textInsteadOfTool').catch(() => {});
       conversation.push({ role: 'assistant', content: response.content });
       conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed. Use FINAL_RESPONSE if complete or if data is gathered and needs formatting or extraction.' });
       continue;
@@ -180,17 +188,31 @@ async function executeLLMStep(step, context, actionUUID, stepIndex) {
 
     for (const call of response.tool_calls) {
       const toolName = call.function.name;
+      // Track which tool was chosen by this action
+      getActionStatsCounter().increment(actionName, `choice:${toolName}`).catch(() => {});
+
       let args;
       try { args = JSON.parse(call.function.arguments); }
-      catch { addToolResult(call.id, { error: 'Invalid JSON in arguments' }); break; }
+      catch {
+        getActionStatsCounter().increment(actionName, 'invalidJsonArgs').catch(() => {});
+        addToolResult(call.id, { error: 'Invalid JSON in arguments' });
+        break;
+      }
 
       const action = actionsRegistry[toolName];
-      if (!action) { addToolResult(call.id, { error: `Unknown action: ${toolName}` }); break; }
+      if (!action) {
+        getActionStatsCounter().increment(actionName, 'unknownAction').catch(() => {});
+        addToolResult(call.id, { error: `Unknown action: ${toolName}` });
+        break;
+      }
 
       try {
         const childUUID = `${actionUUID}_${stepIndex}_${crypto.randomUUID()}`;
         const res = await executeAction(action, args, conversation, childUUID);
-        if (toolName === stop_action) return { result: res.result };
+        if (toolName === stop_action) {
+          getActionStatsCounter().increment(actionName, 'iterations', turn + 1).catch(() => {});
+          return { result: res.result };
+        }
         if (res.parent_messages) conversation = res.parent_messages;
         addToolResult(call.id, res.result);
       } catch (err) {
@@ -203,6 +225,8 @@ async function executeLLMStep(step, context, actionUUID, stepIndex) {
   }
 
   tracer.traceWarning(actionUUID, stepIndex, 'Max iterations reached', { max_iterations });
+  getActionStatsCounter().increment(actionName, 'maxIterationsReached').catch(() => {});
+  getActionStatsCounter().increment(actionName, 'iterations', max_iterations).catch(() => {});
   const stopUUID = `${actionUUID}_${stepIndex}_${crypto.randomUUID()}`;
   const stopRes = await executeAction(actionsRegistry[stop_action], { justification: 'Max iterations reached' }, conversation, stopUUID);
   return { result: stopRes.result };
