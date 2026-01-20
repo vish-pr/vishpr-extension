@@ -9,7 +9,7 @@
     "prebuild": "npm test && rm -rf dist && mkdir -p dist && cp manifest.json icon-*.png sidepanel.html dist/",
     "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
     "build:css": "tailwindcss -i ./input.css -o ./dist/styles.css --minify",
-    "zip": "mkdir -p release && cd dist && zip -r ../release/vishpr-extension.zip . && cd .. && echo 'Created release/vishpr-extension.zip'",
+    "zip": "mkdir -p release && VERSION=$(node -p \"require('./dist/manifest.json').version\") && cd dist && zip -r ../release/vishpr-extension-$VERSION.zip . && cd .. && echo \"Created release/vishpr-extension-$VERSION.zip\"",
     "package": "npm run build && npm run zip",
     "prewatch": "npm run prebuild",
     "watch": "concurrently \"npm run watch:js\" \"npm run watch:css\"",

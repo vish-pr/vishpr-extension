@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "vishpr Browser Agent",
-  "version": "1.0.0",
+  "version": "0.1",
   "description": "Browser extension that uses LLMs to automate web browsing tasks through natural language commands",
   "icons": {
     "16": "icon-16.png",
