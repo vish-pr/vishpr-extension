@@ -11,6 +11,26 @@ const ICONS = {
   dot: '<svg class="size-2.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>',
 };
 
+// Format object as key: value pairs instead of JSON
+function formatKeyValue(obj) {
+  if (!obj || typeof obj !== 'object') return String(obj);
+  return Object.entries(obj)
+    .map(([k, v]) => `${k}: ${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
+    .join('\n');
+}
+
+// Find CRITIQUE child action result from trace tree
+function findCritiqueResult(trace) {
+  if (!trace?.children) return null;
+  // Critique is attached directly to root action's children
+  for (const child of trace.children) {
+    if (child.type === 'action' && child.name === 'CRITIQUE' && child.output?.result) {
+      return child.output.result;
+    }
+  }
+  return null;
+}
+
 const ACTIONS = [
   { name: 'READ_PAGE', desc: 'Extract page content', params: {} },
   { name: 'CLICK_ELEMENT', desc: 'Click element by ID', params: { elementId: 'string' } },
@@ -169,15 +189,15 @@ async function execute() {
 
   state.running = true;
   els.runBtn.disabled = true;
-  const runId = Date.now().toString();
-  const run = { id: runId, action: actionName.toUpperCase(), params, time: new Date(), status: 'running' };
+  const run = { id: null, action: actionName.toUpperCase(), params, time: new Date(), status: 'running' };
 
   showRunning(run);
 
   try {
     const res = await chrome.runtime.sendMessage({
-      type: 'DEBUG_EXECUTE', actionName: actionName.toUpperCase(), params, tabId: state.tabId, runId
+      type: 'DEBUG_EXECUTE', actionName: actionName.toUpperCase(), params, tabId: state.tabId
     });
+    run.id = res.traceId;
     run.status = res.error ? 'error' : 'success';
     run.trace = res.trace;
     run.error = res.error;
@@ -258,31 +278,56 @@ function renderTimeline(run) {
       el.dataset.collapsed = isCollapsed ? 'false' : 'true';
     });
   });
+
 }
 
 function renderNode(node, depth = 0) {
   const hasChildren = node.children?.length > 0;
   const hasDetails = node.input || node.output || node.error || node.context || node.model || node.prompt;
-  const icons = { action: 'A', step: 'S', function: 'F', llm: 'L', chrome: 'C', context: '{}', iteration: '?' };
+  const icons = { action: 'A', step: 'S', function: 'F', llm: 'L', chrome: 'C', context: '{}', warning: '!', iteration: '↻' };
   const icon = icons[node.type] || '?';
+  if (icon === '?') console.warn('Unknown node type:', node);
   const statusIcon = { success: ICONS.check, error: ICONS.x, running: ICONS.dot }[node.status] || '';
   const statusClass = `trace-status-${node.status || 'pending'}`;
   const expandedClass = depth === 0 ? 'expanded' : '';
 
   const details = [];
-  if (node.model) details.push(detailRow('MODEL', node.model));
-  if (node.tokens) details.push(detailRow('TOKENS', `${node.tokens.input || 0} in / ${node.tokens.output || 0} out`));
-  if (node.input) details.push(detailRow('INPUT', `<pre>${escapeHtml(JSON.stringify(node.input, null, 2))}</pre>`, node.input));
-  if (node.prompt) details.push(detailRow('PROMPT', `<pre>${escapeHtml(node.prompt)}</pre>`, node.prompt));
-  if (node.output) details.push(detailRow('RESULT', `<pre>${escapeHtml(JSON.stringify(node.output, null, 2))}</pre>`, node.output));
-  if (node.context) details.push(detailRow('CONTEXT', `<pre>${escapeHtml(JSON.stringify(node.context, null, 2))}</pre>`, node.context));
+  // Stats row for actions/steps with aggregated LLM stats
+  if (node.stats) {
+    const { tokens, cost, upstreamCost, llmCalls } = node.stats;
+    const costStr = `<span title="API cost">$${cost.toFixed(4)}</span> / <span title="Upstream inference cost">~$${upstreamCost.toFixed(4)}</span>`;
+    const statsStr = `${tokens.input + tokens.output} tokens (${tokens.input} in / ${tokens.output} out) · ${costStr} · ${llmCalls} LLM calls`;
+    details.push(detailRow('STATS', `<span class="opacity-70">${statsStr}</span>`));
+  }
+  // LLM-specific fields
+  if (node.type === 'llm' && node.usageStats) {
+    const { tokens, cost, upstreamCost } = node.usageStats;
+    const costStr = `<span title="API cost">$${cost.toFixed(4)}</span> / <span title="Upstream inference cost">~$${upstreamCost.toFixed(4)}</span>`;
+    const tokensStr = `${tokens.input} in / ${tokens.output} out`;
+    details.push(detailRow('MODEL', `${node.model || 'unknown'} · ${tokensStr} · ${costStr}`));
+  }
+  if (node.input) details.push(detailRow('INPUT', `<pre>${escapeHtml(formatKeyValue(node.input))}</pre>`));
+  if (node.prompt) details.push(detailRow('PROMPT', `<pre>${escapeHtml(node.prompt)}</pre>`));
+  if (node.output) {
+    const outputData = node.output?.result ?? node.output;
+    // Filter out usage field
+    const filtered = typeof outputData === 'object' && outputData !== null
+      ? Object.fromEntries(Object.entries(outputData).filter(([k]) => k !== 'usage'))
+      : outputData;
+    const label = node.type === 'llm' ? 'RESPONSE' : 'RESULT';
+    details.push(detailRow(label, `<pre>${escapeHtml(typeof filtered === 'string' ? filtered : formatKeyValue(filtered))}</pre>`));
+  }
+  if (node.context) details.push(detailRow('CONTEXT', `<pre>${escapeHtml(JSON.stringify(node.context, null, 2))}</pre>`));
   if (node.error) {
     const errorStr = typeof node.error === 'object' ? JSON.stringify(node.error, null, 2) : String(node.error);
-    details.push(detailRow('ERROR', `<span class="text-error">${escapeHtml(errorStr)}</span>`, errorStr));
+    details.push(detailRow('ERROR', `<span class="text-error">${escapeHtml(errorStr)}</span>`));
   }
 
+  // For actions, add data attribute to enable polling if still running
+  const actionAttr = node.type === 'action' ? `data-action-uuid="${node.id}" data-status="${node.status}"` : '';
+
   return `
-    <div class="trace-node ${expandedClass}">
+    <div class="trace-node ${expandedClass}" ${actionAttr}>
       <div class="trace-header">
         <span class="trace-toggle">${hasChildren || hasDetails ? ICONS.chevron : ''}</span>
         <span class="trace-icon trace-icon-${node.type || 'step'}">${icon}</span>
@@ -297,48 +342,19 @@ function renderNode(node, depth = 0) {
   `;
 }
 
-// Thresholds for collapsible content
-const COLLAPSE_THRESHOLD = 500;  // chars before collapsing
-const PREVIEW_LENGTH = 200;      // chars to show in preview
-
-function detailRow(label, value, rawValue = null) {
-  const content = typeof rawValue === 'string' ? rawValue : (rawValue ? JSON.stringify(rawValue, null, 2) : '');
-  const isLarge = content.length > COLLAPSE_THRESHOLD;
-
-  if (isLarge) {
-    const preview = escapeHtml(content.substring(0, PREVIEW_LENGTH));
-    const fullContent = escapeHtml(content);
-    return `
-      <div class="trace-detail-row">
-        <span class="trace-detail-label">${label}</span>
-        <div class="trace-detail-value">
-          <div class="trace-collapsible" data-collapsed="true">
-            <div class="trace-collapsible-header">
-              <span class="trace-collapsible-toggle">▶</span>
-              <span class="trace-collapsible-size">${formatSize(content.length)}</span>
-            </div>
-            <pre class="trace-collapsible-preview">${preview}...</pre>
-            <pre class="trace-collapsible-full">${fullContent}</pre>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
+function detailRow(label, value) {
   return `<div class="trace-detail-row"><span class="trace-detail-label">${label}</span><div class="trace-detail-value">${value}</div></div>`;
 }
 
-function formatSize(chars) {
-  if (chars < 1000) return `${chars} chars`;
-  if (chars < 1000000) return `${(chars / 1000).toFixed(1)}k chars`;
-  return `${(chars / 1000000).toFixed(1)}M chars`;
-}
-
 function renderHistory() {
+  const getLabel = (run) => {
+    if (run.params?.user_message) return run.params.user_message.slice(0, 30) + (run.params.user_message.length > 30 ? '…' : '');
+    return run.action;
+  };
   els.history.innerHTML = state.history.map((run, i) => `
     <div class="p-1.5 rounded text-xs cursor-pointer ${i === state.selected ? 'bg-primary/20' : 'hover:bg-base-300'} ${run.status === 'error' ? 'border-l-2 border-error' : ''}" data-idx="${i}">
       <div class="flex items-center gap-1">
-        <span class="font-mono truncate flex-1">${run.action}</span>
+        <span class="truncate flex-1">${escapeHtml(getLabel(run))}</span>
         <button class="opacity-40 hover:opacity-100 hover:text-error text-xs" data-delete="${i}" title="Delete">×</button>
       </div>
       <div class="opacity-50 flex justify-between">
@@ -459,9 +475,10 @@ async function refreshCritique() {
   els.badge.className = 'badge badge-xs badge-ghost animate-pulse';
 
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'GET_TRACE_BY_RUN_ID', runId: run.id });
-    if (res.trace?.critique) {
-      run.critique = res.trace.critique;
+    const res = await chrome.runtime.sendMessage({ type: 'GET_TRACE_BY_ID', traceId: run.id });
+    if (res.trace?.trace) {
+      run.trace = res.trace.trace;
+      run.critique = findCritiqueResult(res.trace.trace);
     }
     renderTimeline(run);
   } catch (e) {
@@ -476,8 +493,9 @@ async function loadStoredTraces() {
     const res = await chrome.runtime.sendMessage({ type: 'GET_TRACES', limit: 50 });
     if (res.traces?.length) {
       state.history = res.traces.map(t => ({
-        id: t.runId, action: t.actionName, params: t.params, time: new Date(t.timestamp),
-        status: t.status, duration: t.duration, trace: t.trace, error: t.error, critique: t.critique
+        id: t.traceId, action: t.trace?.name, params: t.trace?.input, time: new Date(t.timestamp),
+        status: t.status, duration: t.trace?.duration, trace: t.trace, error: t.error,
+        critique: findCritiqueResult(t.trace)
       }));
       renderHistory();
       // Auto-select most recent history item
@@ -510,7 +528,7 @@ async function deleteHistoryItem(idx) {
   const run = state.history[idx];
   if (!run) return;
 
-  try { await chrome.runtime.sendMessage({ type: 'DELETE_TRACE', runId: run.id }); } catch {}
+  try { await chrome.runtime.sendMessage({ type: 'DELETE_TRACE', traceId: run.id }); } catch {}
 
   state.history.splice(idx, 1);
   if (state.selected === idx) {

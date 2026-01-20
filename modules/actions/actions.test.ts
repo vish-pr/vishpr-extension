@@ -52,7 +52,7 @@ for (const [name, action] of Object.entries(actionsRegistry) as [string, Action]
 
       // Validate template variables (only if no function step preceded)
       if (!hasFunctionStep) {
-        const stepVars = new Set([...availableVars, ...(hasChoice ? ['decisionGuide', 'browser_state', 'stop_action'] : [])]);
+        const stepVars = new Set([...availableVars, 'current_datetime', ...(hasChoice ? ['decisionGuide', 'browser_state', 'stop_action'] : [])]);
         for (const v of [...extractVars(llmStep.system_prompt), ...extractVars(llmStep.message)]) {
           assert(stepVars.has(v), `${id}: unknown variable {{${v}}}`);
         }

@@ -51,13 +51,14 @@ export async function callOpenAICompatible({ endpoint, model, messages, tools, s
   // For structured schema, parse JSON from content
   if (schema && message.content) {
     try {
-      return JSON.parse(message.content);
+      const parsed = JSON.parse(message.content);
+      return { ...parsed, usage: data.usage, model: data.model };
     } catch (e) {
       throw new Error(`Invalid JSON in schema response: ${e.message}`);
     }
   }
 
-  return message;
+  return { ...message, usage: data.usage, model: data.model };
 }
 
 export async function verifyModel(endpointName, modelId, openrouterProvider = null) {

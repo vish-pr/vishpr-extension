@@ -31,6 +31,7 @@ export const routerAction: Action = {
     {
       type: 'llm',
       system_prompt: `You are a browser assistant that routes user requests to appropriate tools.
+Current time: {{{current_datetime}}}
 
 Tools:
 - BROWSER_ACTION: Web page interaction (reading, clicking, forms, navigation)

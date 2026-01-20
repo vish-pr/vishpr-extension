@@ -1,12 +1,11 @@
 /**
  * Action executor - Params in, result out
- * Uses context accumulation: each step's result merges into context
- * Tracing via global tracer with UUID-based parent-child linking
+ * Uses tracer singleton for tracing and persistence
  */
 import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
-import { actionsRegistry, resolveStepTemplates } from './actions/index.js';
-import { tracer, createTracedGenerate } from './trace-collector.js';
+import { actionsRegistry, resolveStepTemplates, CRITIQUE } from './actions/index.js';
+import { tracer, getTraceById } from './trace-collector.js';
 
 const TIMEOUT_MS = 20000;
 
@@ -34,56 +33,53 @@ function validateParams(params, schema) {
 /**
  * Execute an action
  * @param {object} action - Action definition
- * @param {object} params - Input parameters (may include _parentTraceUUID for child actions)
+ * @param {object} params - Input parameters
  * @param {array} parent_messages - Conversation history for multi-turn
- * @returns {object} Result with _traceUUID for trace retrieval
+ * @param {string} traceUUID - Composite trace ID from parent (format: parentUUID_stepIndex_uuid), or null for root
  */
-export async function executeAction(action, params, parent_messages = null) {
-  // Extract trace UUID from params, start new action linked to parent
-  const { _parentTraceUUID, ...cleanParams } = params;
-  const actionUUID = tracer.startAction(_parentTraceUUID || null, action.name, cleanParams);
+export async function executeAction(action, params, parent_messages = null, traceUUID = null) {
+  // Start action trace (traceUUID is composite ID from parent, or null for root)
+  const { uuid: actionUUID, startTime } = tracer.startAction(traceUUID, action.name, params);
 
   if (action.input_schema) {
-    const { valid, errors } = validateParams(cleanParams, action.input_schema);
+    const { valid, errors } = validateParams(params, action.input_schema);
     if (!valid) {
       const error = new Error(`Validation failed for ${action.name}: ${errors.join(', ')}`);
       Object.assign(error, { isValidationError: true, validationErrors: errors });
-      tracer.endAction(actionUUID, null, error);
+      tracer.endAction(actionUUID, startTime, null, error);
       throw error;
     }
   }
 
-  let context = { ...cleanParams, parent_messages, _traceUUID: actionUUID };
+  let context = { ...params, parent_messages };
   let lastStepOutput = {};
 
   for (let i = 0; i < action.steps.length; i++) {
     const step = action.steps[i];
-    const stepUUID = tracer.startStep(actionUUID, i, step.type, {
+    const { startTime: stepStartTime } = tracer.startStep(actionUUID, i, step.type, {
       handler: step.handler?.name,
       action: step.action,
-    });
+    }, context);
 
     try {
       let stepOutput;
-      const startTime = performance.now();
 
       switch (step.type) {
         case 'function': {
           stepOutput = await withTimeout(step.handler(context), TIMEOUT_MS);
-          const duration = performance.now() - startTime;
-          tracer.traceFunction(stepUUID, step.handler?.name || 'anonymous', context, stepOutput, duration);
           break;
         }
         case 'llm': {
-          stepOutput = await executeLLMStep(step, context);
+          stepOutput = await executeLLMStep(step, context, actionUUID, i);
           break;
         }
         case 'action': {
-          // Child action: pass current actionUUID as parent
+          const childUUID = `${actionUUID}_${i}_${crypto.randomUUID()}`;
           stepOutput = await executeAction(
             actionsRegistry[step.action],
-            { ...context, _parentTraceUUID: actionUUID },
-            context.parent_messages
+            context,
+            context.parent_messages,
+            childUUID
           );
           break;
         }
@@ -97,30 +93,53 @@ export async function executeAction(action, params, parent_messages = null) {
       }
       if (stepOutput.parent_messages) context.parent_messages = stepOutput.parent_messages;
 
-      tracer.traceContext(stepUUID, context);
-      tracer.endStep(stepUUID, stepOutput);
+      tracer.endStep(actionUUID, i, stepStartTime, stepOutput);
 
     } catch (error) {
-      tracer.endStep(stepUUID, null, error);
-      tracer.endAction(actionUUID, null, error);
+      tracer.endStep(actionUUID, i, stepStartTime, null, error);
+      tracer.endAction(actionUUID, startTime, null, error);
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
     }
   }
 
   const result = {
     result: lastStepOutput,
-    _traceUUID: actionUUID,
     ...(context.parent_messages && { parent_messages: context.parent_messages })
   };
 
-  tracer.endAction(actionUUID, result);
+  const endEvent = tracer.endAction(actionUUID, startTime, result);
+
+  // Only return trace info for root action (no parent)
+  if (!traceUUID) {
+    // Fire-and-forget critique for root actions (except CRITIQUE itself)
+    if (action.name !== CRITIQUE) {
+      runCritiqueAsync(actionUUID);
+    }
+    return { ...result, _traceUUID: actionUUID, _duration: endEvent.duration };
+  }
+
   return result;
 }
 
-async function executeLLMStep(step, parent_context) {
+// Fire-and-forget critique runner
+async function runCritiqueAsync(parentUUID) {
+  try {
+    const trace = await getTraceById(parentUUID);
+    if (!trace?.trace) return;
+    const critiqueUUID = `${parentUUID}_critique_${crypto.randomUUID()}`;
+    await executeAction(actionsRegistry[CRITIQUE], { trace: trace.trace }, null, critiqueUUID);
+  } catch (e) {
+    console.error('Critique failed:', e.message);
+  }
+}
+
+async function executeLLMStep(step, context, actionUUID, stepIndex) {
   const { intelligence, output_schema, tool_choice, skip_if } = step;
-  const traceUUID = parent_context._traceUUID;
-  const context = { ...parent_context, browser_state: await getBrowserStateBundle(), stop_action: tool_choice?.stop_action };
+  const current_datetime = new Date().toLocaleString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
+  });
+  context = { ...context, browser_state: await getBrowserStateBundle(), current_datetime, stop_action: tool_choice?.stop_action };
 
   if (skip_if && skip_if(context)) {
     return {};
@@ -130,7 +149,7 @@ async function executeLLMStep(step, parent_context) {
   const sysPrompt = systemPrompt(context);
   const userMsg = renderMessage(context);
 
-  const tracedGenerate = createTracedGenerate(generate, traceUUID);
+  const tracedGenerate = createTracedGenerate(generate, actionUUID, stepIndex);
 
   // Single-turn: no tool_choice
   if (!tool_choice) {
@@ -148,11 +167,10 @@ async function executeLLMStep(step, parent_context) {
   const addToolResult = (id, content) => conversation.push({ role: 'tool', tool_call_id: id, content: JSON.stringify(content) });
 
   for (let turn = 0; turn < max_iterations; turn++) {
-    tracer.traceIteration(traceUUID, turn, max_iterations);
-    const response = await withTimeout(tracedGenerate({ messages: conversation, intelligence, tools }), TIMEOUT_MS);
+    const response = await withTimeout(tracedGenerate({ messages: conversation, intelligence, tools }, turn, max_iterations), TIMEOUT_MS);
 
     if (!response.tool_calls?.length) {
-      tracer.traceWarning(traceUUID, 'LLM returned text instead of tool call', { content: response.content });
+      tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: response.content });
       conversation.push({ role: 'assistant', content: response.content });
       conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed. Use FINAL_RESPONSE if complete or if data is gathered and needs formatting or extraction.' });
       continue;
@@ -170,8 +188,8 @@ async function executeLLMStep(step, parent_context) {
       if (!action) { addToolResult(call.id, { error: `Unknown action: ${toolName}` }); break; }
 
       try {
-        // Tool actions: parent is current step's trace UUID
-        const res = await executeAction(action, { ...args, _parentTraceUUID: traceUUID }, conversation);
+        const childUUID = `${actionUUID}_${stepIndex}_${crypto.randomUUID()}`;
+        const res = await executeAction(action, args, conversation, childUUID);
         if (toolName === stop_action) return { result: res.result };
         if (res.parent_messages) conversation = res.parent_messages;
         addToolResult(call.id, res.result);
@@ -184,9 +202,38 @@ async function executeLLMStep(step, parent_context) {
     conversation.push({ role: 'user', content: renderMessage({ ...context, browser_state: await getBrowserStateBundle() }) });
   }
 
-  tracer.traceWarning(traceUUID, 'Max iterations reached', { max_iterations });
-  const stopRes = await executeAction(actionsRegistry[stop_action], { justification: 'Max iterations reached', _parentTraceUUID: traceUUID }, conversation);
+  tracer.traceWarning(actionUUID, stepIndex, 'Max iterations reached', { max_iterations });
+  const stopUUID = `${actionUUID}_${stepIndex}_${crypto.randomUUID()}`;
+  const stopRes = await executeAction(actionsRegistry[stop_action], { justification: 'Max iterations reached' }, conversation, stopUUID);
   return { result: stopRes.result };
+}
+
+function createTracedGenerate(generateFn, actionUUID, stepIndex) {
+  return async function tracedGenerate(options, turn = null, maxTurns = null) {
+    const startTime = performance.now();
+    let result, error;
+
+    try {
+      result = await generateFn(options);
+    } catch (err) {
+      error = err;
+    }
+
+    const duration = performance.now() - startTime;
+    const formatMessage = (m) => {
+      if (m.content) return `[${m.role}]: ${m.content}`;
+      if (m.tool_calls) return `[${m.role}]: ${m.tool_calls.map(tc => `${tc.function.name}(${tc.function.arguments})`).join(', ')}`;
+      return `[${m.role}]: (empty)`;
+    };
+    const promptStr = options.messages
+      ? options.messages.map(formatMessage).join('\n')
+      : options.prompt || '';
+
+    tracer.traceLLM(actionUUID, stepIndex, result?.model || 'unknown', promptStr, result, duration, turn, maxTurns, error);
+
+    if (error) throw error;
+    return result;
+  };
 }
 
 function buildTools(availableActions) {
@@ -203,7 +250,6 @@ function buildTools(availableActions) {
   }).filter(Boolean);
 }
 
-// Extract final answer from nested result - use at top level only
 export function unwrapFinalAnswer(result) {
   if (typeof result === 'string') return result;
   const inner = result?.result || result;

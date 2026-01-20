@@ -9,6 +9,8 @@
     "prebuild": "npm test && rm -rf dist && mkdir -p dist && cp manifest.json icon-*.png sidepanel.html dist/",
     "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
     "build:css": "tailwindcss -i ./input.css -o ./dist/styles.css --minify",
+    "zip": "cd dist && zip -r ../vishpr-extension.zip . && cd .. && echo 'Created vishpr-extension.zip'",
+    "package": "npm run build && npm run zip",
     "prewatch": "npm run prebuild",
     "watch": "concurrently \"npm run watch:js\" \"npm run watch:css\"",
     "watch:js": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --watch",

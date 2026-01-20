@@ -1,11 +1,10 @@
 // Background Service Worker
 import { verifyApiKey as llmVerifyApiKey, isInitialized } from './modules/llm/index.js';
 import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
-import { getAction, BROWSER_ROUTER, CRITIQUE, actionsRegistry } from './modules/actions/index.js';
+import { getAction, BROWSER_ROUTER, actionsRegistry } from './modules/actions/index.js';
 import logger from './modules/logger.js';
 import { getChromeAPI } from './modules/chrome-api.js';
-import { tracer } from './modules/trace-collector.js';
-import { storeTrace, getTraces, getTraceByRunId, deleteTrace, clearTraces, updateTrace } from './modules/trace-storage.js';
+import { getTraces, getTraceById, deleteTrace } from './modules/trace-collector.js';
 
 // Enable side panel on extension icon click
 chrome.action.onClicked.addListener(async (tab) => {
@@ -39,18 +38,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(traces => sendResponse({ traces }))
       .catch(error => sendResponse({ error: error.message }));
     return true;
-  } else if (message.type === 'GET_TRACE_BY_RUN_ID') {
-    getTraceByRunId(message.runId)
+  } else if (message.type === 'GET_TRACE_BY_ID') {
+    getTraceById(message.traceId)
       .then(trace => sendResponse({ trace }))
       .catch(error => sendResponse({ error: error.message }));
     return true;
   } else if (message.type === 'DELETE_TRACE') {
-    deleteTrace(message.runId)
-      .then(() => sendResponse({ success: true }))
-      .catch(error => sendResponse({ error: error.message }));
-    return true;
-  } else if (message.type === 'CLEAR_TRACES') {
-    clearTraces()
+    deleteTrace(message.traceId)
       .then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ error: error.message }));
     return true;
@@ -58,52 +52,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleUserMessage({ message }) {
-  const runId = Date.now().toString();
+  const actionName = BROWSER_ROUTER;
+  const params = { user_message: message };
 
   try {
     if (!(await isInitialized())) {
       throw new Error('No LLM endpoints configured. Please configure an endpoint in settings.');
     }
 
-    const action = getAction(BROWSER_ROUTER);
-    // executeAction now handles tracing internally, returns _traceUUID
-    const result = await executeAction(action, { user_message: message });
-    const traceUUID = result._traceUUID;
-    const trace = tracer.getTrace(traceUUID);
+    const action = getAction(actionName);
+    const result = await executeAction(action, params);
+    const { _traceUUID: traceId, _duration: duration } = result;
 
-    logger.info('Execution trace', { runId, traceUUID });
-    await storeSuccessTrace(runId, BROWSER_ROUTER, { user_message: message }, trace);
-    runCritiqueAsync(runId, trace);
-    tracer.cleanup(traceUUID); // Free memory
+    logger.info('Execution trace', { traceId, duration });
 
     return unwrapFinalAnswer(result);
   } catch (error) {
-    logger.error('Execution failed', { runId, error: error.message });
-    await storeErrorTrace(runId, BROWSER_ROUTER, { user_message: message }, error.message);
+    logger.error('Execution failed', { error: error.message });
     throw error;
-  }
-}
-
-// Trace storage helpers
-const storeSuccessTrace = (runId, actionName, params, trace) => storeTrace({
-  runId, timestamp: new Date().toISOString(), actionName, params,
-  status: 'success', duration: trace?.duration, trace, critique: null,
-});
-
-const storeErrorTrace = (runId, actionName, params, errorMessage) => storeTrace({
-  runId, timestamp: new Date().toISOString(), actionName, params,
-  status: 'error', error: errorMessage, trace: null, critique: null,
-});
-
-// Non-blocking critique runner (fire-and-forget)
-async function runCritiqueAsync(runId, trace) {
-  if (!trace) return;
-  try {
-    const critiqueAction = getAction(CRITIQUE);
-    const result = await executeAction(critiqueAction, { trace });
-    await updateTrace(runId, { critique: result.result });
-  } catch (e) {
-    console.error('Critique failed:', e.message);
   }
 }
 
@@ -117,7 +83,9 @@ async function verifyApiKey(apiKey) {
 }
 
 // Handle debug execution from DevTools panel
-async function handleDebugExecute({ actionName, params, runId }) {
+async function handleDebugExecute({ actionName, params }) {
+  const cleanParams = params || {};
+
   try {
     if (!(await isInitialized())) {
       throw new Error('No LLM endpoints configured. Please configure an endpoint in settings.');
@@ -128,19 +96,17 @@ async function handleDebugExecute({ actionName, params, runId }) {
       throw new Error(`Unknown action: ${actionName}`);
     }
 
-    const result = await executeAction(action, params || {});
-    const traceUUID = result._traceUUID;
-    const trace = tracer.getTrace(traceUUID);
+    const result = await executeAction(action, cleanParams);
+    const { _traceUUID: traceId, _duration: duration } = result;
 
-    logger.info('Execution trace', { runId, traceUUID });
-    await storeSuccessTrace(runId, actionName, params || {}, trace);
-    runCritiqueAsync(runId, trace);
-    tracer.cleanup(traceUUID);
+    logger.info('Execution trace', { traceId, duration });
 
-    return { result: result.result, trace };
+    // Fetch the built trace for response
+    const traceData = await getTraceById(traceId);
+
+    return { result: result.result, trace: traceData?.trace, traceId };
   } catch (error) {
-    logger.error('Execution failed', { runId, error: error.message });
-    await storeErrorTrace(runId, actionName, params || {}, error.message);
+    logger.error('Execution failed', { error: error.message });
     return { error: error.message, trace: null };
   }
 }
