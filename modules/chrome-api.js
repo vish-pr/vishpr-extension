@@ -117,6 +117,24 @@ class ChromeAPI {
       this._persistState();
     });
 
+    // Handle tab moving to a different window
+    chrome.tabs.onAttached.addListener(async (tabId, { newWindowId }) => {
+      // If a tracked tab moves to a new window, update windowId and reinitialize
+      if (this.tabs.has(tabId) || tabId === this.currentTabId) {
+        this.windowId = newWindowId;
+        this._initCurrentTab();
+      }
+    });
+
+    chrome.tabs.onDetached.addListener((tabId, { oldWindowId }) => {
+      // Remove tab from tracking when it leaves the window
+      // It will be re-added by onAttached when it joins the new window
+      if (this.windowId && oldWindowId === this.windowId) {
+        this.tabs.delete(tabId);
+        this._persistState();
+      }
+    });
+
     this._initCurrentTab();
   }
 
@@ -139,7 +157,7 @@ class ChromeAPI {
         const activeQuery = this.windowId
           ? { active: true, windowId: this.windowId }
           : { active: true, currentWindow: true };
-        let [activeTab] = await chrome.tabs.query(activeQuery);
+        const [activeTab] = await chrome.tabs.query(activeQuery);
         if (activeTab) {
           this.currentTabId = activeTab.id;
           this.currentTabUrl = activeTab.url;

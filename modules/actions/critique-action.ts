@@ -45,33 +45,47 @@ const OUTPUT_SCHEMA: JSONSchema = {
   additionalProperties: false
 };
 
-const SYSTEM_PROMPT = `You are an expert at analyzing LLM-powered action execution traces.
+const SYSTEM_PROMPT = `You analyze LLM action execution traces for improvements.
 
-Analyze the provided trace and identify improvements in three areas:
+# Analysis Areas
 
-1. **Prompts**: Evaluate system prompts and messages for:
-   - Clarity and specificity
-   - Missing context that caused confusion
-   - Overly verbose or redundant instructions
-   - Ambiguous instructions that led to wrong actions
+## 1. Prompts
+- Clarity and specificity
+- Missing context causing confusion
+- Verbose or redundant instructions
+- Ambiguous instructions causing wrong actions
 
-2. **Efficiency**: Look for:
-   - Unnecessary LLM calls or iterations
-   - Actions that could have been combined
-   - Redundant data gathering
-   - Suboptimal action selection
+## 2. Efficiency
+- Unnecessary LLM calls or iterations
+- Actions that could be combined
+- Redundant data gathering
+- Suboptimal action selection
 
-3. **Errors**: Analyze warnings and failures:
-   - Root cause of failures
-   - Whether errors were recoverable
-   - Missing error handling
-   - Patterns that lead to failures
+## 3. Errors
+- Root cause of failures
+- Recoverability of errors
+- Missing error handling
+- Failure patterns
 
-Be specific - reference exact locations in the trace (action names, step numbers, turn numbers).
-Be actionable - every issue should have a concrete suggestion.
-Be prioritized - mark severity based on impact (low/medium/high).
+# Requirements
+MUST:
+- Reference exact locations (e.g., "BROWSER_ROUTER > Step 2 > system_prompt")
+- Provide concrete suggestions for each issue
+- Rate severity: high (blocked task), medium (degraded quality), low (minor)
 
-If an area has no issues, return an empty array for that section.`;
+SHOULD:
+- Prioritize high-impact issues first
+- Identify patterns across multiple issues
+
+# Example Issue
+{
+  "location": "ROUTER > Step 1 > message",
+  "problem": "Vague instruction 'handle the request' caused wrong tool selection",
+  "suggestion": "Specify criteria: 'If URL present, use BROWSER_ACTION'",
+  "severity": "high"
+}
+
+Return empty arrays for areas with no issues.`;
 
 interface CritiqueContext extends StepContext {
   trace: unknown;
@@ -113,7 +127,13 @@ export const critiqueAction: Action = {
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
-      message: `Analyze this execution trace:\n\n{{{traceJson}}}`,
+      message: `Analyze this execution trace for improvements.
+
+<trace>
+{{{traceJson}}}
+</trace>
+
+Identify issues in prompts, efficiency, and errors. Provide actionable suggestions.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     }

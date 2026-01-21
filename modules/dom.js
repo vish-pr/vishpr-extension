@@ -1,37 +1,85 @@
-// DOM Element References
+// DOM Element References (lazy getters - cached on first access)
+
+function lazy(id) {
+  let cached;
+  return () => cached ??= document.getElementById(id);
+}
+
+function lazyQuery(selector) {
+  let cached;
+  return () => cached ??= document.querySelector(selector);
+}
+
 export const elements = {
-  chatContainer: document.getElementById('chatContainer'),
-  messageInput: document.getElementById('messageInput'),
-  sendButton: document.getElementById('sendButton'),
-  settingsPanel: document.getElementById('settingsPanel'),
-  settingsToggle: document.getElementById('settingsToggle'),
-  headerTitle: document.getElementById('headerTitle'),
+  // Chat
+  get chatContainer() { return lazy('chatContainer')(); },
+  get messageInput() { return lazy('messageInput')(); },
+  get sendButton() { return lazy('sendButton')(); },
+
+  // Header
+  get headerTitle() { return lazy('headerTitle')(); },
+  get statusDot() { return lazy('statusDot')(); },
+  get statusText() { return lazy('statusText')(); },
+
+  // Settings panel
+  get settingsPanel() { return lazy('settingsPanel')(); },
+  get settingsToggle() { return lazy('settingsToggle')(); },
+  get settingsModelsTab() { return lazy('settingsModelsTab')(); },
+  get settingsUiTab() { return lazy('settingsUiTab')(); },
 
   // Endpoints
-  endpointsList: document.getElementById('endpointsList'),
-  addEndpointBtn: document.getElementById('addEndpointBtn'),
+  get endpointsList() { return lazy('endpointsList')(); },
+  get addEndpointBtn() { return lazy('addEndpointBtn')(); },
 
   // Model configuration
-  modelsBody: document.getElementById('modelsBody'),
-  modelListHigh: document.getElementById('modelListHigh'),
-  modelListMedium: document.getElementById('modelListMedium'),
-  modelListLow: document.getElementById('modelListLow'),
-  resetModelsBtn: document.getElementById('resetModelsBtn'),
-
-  // Settings tabs
-  settingsModelsTab: document.getElementById('settingsModelsTab'),
-  settingsUiTab: document.getElementById('settingsUiTab'),
-
-  // Stats (in debug panel)
-  modelStatsContainer: document.getElementById('modelStatsContainer'),
-  actionStatsContainer: document.getElementById('actionStatsContainer'),
+  get modelsBody() { return lazy('modelsBody')(); },
+  get modelListHigh() { return lazy('modelListHigh')(); },
+  get modelListMedium() { return lazy('modelListMedium')(); },
+  get modelListLow() { return lazy('modelListLow')(); },
+  get resetModelsBtn() { return lazy('resetModelsBtn')(); },
 
   // UI settings
-  themeSelector: document.getElementById('themeSelector'),
-  openPositionSettings: document.getElementById('openPositionSettings'),
-  zoomIn: document.getElementById('zoomIn'),
-  zoomOut: document.getElementById('zoomOut'),
-  zoomLevel: document.getElementById('zoomLevel'),
-  zoomSlider: document.getElementById('zoomSlider'),
-  resetUiBtn: document.getElementById('resetUiBtn')
+  get themeSelector() { return lazy('themeSelector')(); },
+  get openPositionSettings() { return lazy('openPositionSettings')(); },
+  get zoomIn() { return lazy('zoomIn')(); },
+  get zoomOut() { return lazy('zoomOut')(); },
+  get zoomLevel() { return lazy('zoomLevel')(); },
+  get zoomSlider() { return lazy('zoomSlider')(); },
+  get resetUiBtn() { return lazy('resetUiBtn')(); },
+
+  // Debug panel
+  get debugToggle() { return lazy('debugToggle')(); },
+  get debugContainer() { return lazy('debugContainer')(); },
+  get debugHistory() { return lazy('debugHistory')(); },
+  get debugClearBtn() { return lazy('debugClearBtn')(); },
+  get debugTimeline() { return lazy('debugTimeline')(); },
+  get debugTiming() { return lazy('debugTiming')(); },
+  get debugCritiqueBadge() { return lazy('debugCritiqueBadge')(); },
+  get debugRefreshBtn() { return lazy('debugRefreshBtn')(); },
+  get debugTraceTab() { return lazy('debugTraceTab')(); },
+  get debugStatsTab() { return lazy('debugStatsTab')(); },
+  get debugStatsRefreshBtn() { return lazy('debugStatsRefreshBtn')(); },
+
+  // Stats (in debug panel)
+  get modelStatsContainer() { return lazy('modelStatsContainer')(); },
+  get actionStatsContainer() { return lazy('actionStatsContainer')(); },
+
+  // Clarification overlay
+  get clarificationOverlay() { return lazy('clarificationOverlay')(); },
+
+  // Input area (class selector)
+  get inputArea() { return lazyQuery('.bg-base-200.border-t')(); },
+
+  // Templates
+  get tplEndpointItem() { return lazy('tpl-endpoint-item')(); },
+  get tplEndpointEditing() { return lazy('tpl-endpoint-editing')(); },
+  get tplModelItem() { return lazy('tpl-model-item')(); },
+  get tplModelEditing() { return lazy('tpl-model-editing')(); },
+  get tplStatsCard() { return lazy('tpl-stats-card')(); },
+  get tplStatsSummary() { return lazy('tpl-stats-summary')(); },
+  get tplActionCard() { return lazy('tpl-action-card')(); },
+  get tplChoiceBar() { return lazy('tpl-choice-bar')(); },
+  get tplAnomalyBadge() { return lazy('tpl-anomaly-badge')(); },
+  get tplSkipRow() { return lazy('tpl-skip-row')(); },
+  get tplClarificationOption() { return lazy('tpl-clarification-option')(); },
 };

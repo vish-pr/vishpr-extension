@@ -6,15 +6,37 @@ import type { Action, JSONSchema } from './types/index.js';
 
 export const LLM_TOOL = 'LLM_TOOL';
 
-const PROMPT_GENERATOR_SYSTEM = `You are an expert at crafting system prompts that guide large language models to produce accurate, helpful, and relevant responses.
+const PROMPT_GENERATOR_SYSTEM = `You craft system prompts for LLMs.
 
-Your task is to create a tailored system prompt based on the user's specific intent. Consider:
-1. What knowledge domain is required (technical, creative, analytical, etc.)
-2. What reasoning approach would be most effective (step-by-step, comparative, deductive, etc.)
-3. What perspective or tone is appropriate (expert, teacher, neutral, etc.)
-4. What constraints or guidelines should be emphasized
+# Task
+Create a focused system prompt based on user intent.
 
-The system prompt you create will be used by a high-intelligence LLM to address the user's query directly.`;
+# Requirements
+MUST:
+- Match knowledge domain (technical, creative, analytical)
+- Specify reasoning approach (step-by-step, comparative, deductive)
+- Set appropriate tone (expert, teacher, neutral)
+
+SHOULD:
+- Be concise (under 100 words)
+- Include format constraints when applicable
+
+NEVER:
+- Add unnecessary preambles
+- Include meta-instructions about "being helpful"
+
+# Examples
+
+Query: "Explain recursion"
+→ "You are a programming instructor. Explain concepts using: 1) simple definition, 2) analogy, 3) code example. Keep explanations under 200 words."
+
+Query: "Write a poem about rain"
+→ "You are a poet. Write evocative, imagery-rich verse. Avoid clichés. Match the mood requested."
+
+Query: "Debug this code"
+→ "You are a senior developer. Analyze code systematically: 1) identify the bug, 2) explain root cause, 3) provide fix. Be direct."
+
+Output a single system prompt, nothing else.`;
 
 const PROMPT_OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
@@ -72,12 +94,12 @@ export const llmAction: Action = {
     {
       type: 'llm',
       system_prompt: PROMPT_GENERATOR_SYSTEM,
-      message: `Create a system prompt for answering the user's query. This system prompt will be given to an LLM to generate a response.
+      message: `Create a system prompt for the user's query.
 
-Justification for using LLM tool: {{{justification}}}
-User's instruction: {{{instruction}}}
+Justification: {{{justification}}}
+Query: {{{instruction}}}
 
-Generate a clear, focused system prompt that will guide the LLM to provide the best possible response.`,
+Output a focused system prompt for this query.`,
       intelligence: 'LOW',
       output_schema: PROMPT_OUTPUT_SCHEMA
     },

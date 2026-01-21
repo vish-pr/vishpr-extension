@@ -76,12 +76,6 @@ async function getDirectChildren(db, parentId) {
   });
 }
 
-// Extract stepIndex from child trace ID
-function parseStepIndex(childId, parentId) {
-  const suffix = childId.slice(parentId.length + 1); // Remove "parentId_"
-  return parseInt(suffix.split('_')[0], 10);
-}
-
 export async function getTraceById(traceId) {
   const db = await getDB();
   const meta = await new Promise(r => { const req = db.transaction(META_STORE).objectStore(META_STORE).get(traceId); req.onsuccess = () => r(req.result); });
@@ -136,8 +130,9 @@ export async function getTraces(limit = 20) {
     };
     request.onerror = () => reject(request.error);
   });
-  // Use getTraceById to include child actions
-  return Promise.all(metas.map(meta => getTraceById(meta.traceId)));
+  // Return metadata only (not full traces) to avoid Chrome message size limits.
+  // Full trace data is fetched on-demand via getTraceById when selecting a trace.
+  return metas;
 }
 
 export async function deleteTrace(traceId) {
@@ -163,11 +158,11 @@ export async function deleteTrace(traceId) {
 // ============ Tracer Functions ============
 
 // Called from startAction only - creates meta for new action
-async function createTraceMeta(traceId, isRoot) {
+async function createTraceMeta(traceId, isRoot, name = null) {
   const db = await getDB();
   await new Promise(r => {
     const tx = db.transaction(META_STORE, 'readwrite');
-    tx.objectStore(META_STORE).put({ traceId, timestamp: Date.now(), status: 'running', isRoot });
+    tx.objectStore(META_STORE).put({ traceId, timestamp: Date.now(), status: 'running', isRoot, name });
     tx.oncomplete = r;
   });
   // Cleanup old root traces
@@ -204,7 +199,7 @@ export const tracer = {
     const isRoot = !traceId;
     const uuid = traceId || crypto.randomUUID();
     const startTime = performance.now();
-    createTraceMeta(uuid, isRoot);
+    createTraceMeta(uuid, isRoot, name);
     persistEvent(uuid, { type: 'action_start', name, input: sanitize(input), startTime });
     return { uuid, startTime };
   },

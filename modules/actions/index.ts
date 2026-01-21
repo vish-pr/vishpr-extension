@@ -9,6 +9,15 @@ import { llmAction, LLM_TOOL } from './llm-action.js';
 import { routerAction, BROWSER_ROUTER } from './router-action.js';
 import { cleanContentAction, CLEAN_CONTENT } from './clean-content-action.js';
 import { critiqueAction, CRITIQUE } from './critique-action.js';
+import {
+  knowledgeBaseActions,
+  RIDDLER,
+  ANSWERER,
+  CHECKER,
+  ADAPTAR,
+  KNOWLEDGE_BASE_ADAPTOR
+} from './knowledge-base-action.js';
+import { clarificationActions } from './clarification-actions.js';
 import logger from '../logger.js';
 
 // Re-export constants
@@ -18,6 +27,9 @@ export { BROWSER_ROUTER } from './router-action.js';
 export { BROWSER_ACTION } from './browser-actions.js';
 export { CLEAN_CONTENT } from './clean-content-action.js';
 export { CRITIQUE } from './critique-action.js';
+export { RIDDLER, ANSWERER, CHECKER, ADAPTAR, KNOWLEDGE_BASE_ADAPTOR } from './knowledge-base-action.js';
+export { USER_CLARIFICATION } from './clarification-actions.js';
+export type { ClarificationResult } from './clarification-actions.js';
 
 // Re-export types
 export type { Action, ActionsRegistry, StepResult, StepContext, Message } from './types/index.js';
@@ -30,7 +42,9 @@ const allActions: Action[] = [
   routerAction,
   browserActionRouter,
   cleanContentAction,
-  critiqueAction
+  critiqueAction,
+  ...knowledgeBaseActions,
+  ...clarificationActions
 ];
 
 export const actionsRegistry: ActionsRegistry = Object.fromEntries(

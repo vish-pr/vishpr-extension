@@ -9,38 +9,35 @@ import type { Action, JSONSchema, StepContext, StepResult } from './types/index.
 
 export const FINAL_RESPONSE = 'FINAL_RESPONSE';
 
-const DECISION_SYSTEM_PROMPT = `You decide whether the conversation already contains a complete answer or needs extraction.
+const DECISION_SYSTEM_PROMPT = `You decide: return answer directly OR generate extraction prompt.
 
 # Decision Rules
 
-MUST return final_answer directly when:
-- Last tool result already contains a clear, complete answer to the user's query
-- Information is already well-formatted and user-ready
-- No additional summarization or extraction would add value
+MUST return final_answer when:
+- Last tool result answers the query completely
+- Information is user-ready (no reformatting needed)
 
 MUST return extraction_prompt when:
-- Answer is scattered across multiple tool results
-- Information needs summarization or reformatting
-- Raw data needs to be converted to user-friendly prose
+- Answer scattered across multiple results
+- Raw data needs conversion to prose
+- Information needs summarization
 
-# Output
-
+# Output Format
 Return ONE of:
-1. { "final_answer": "<answer>", "method": "<steps taken>" } - if answer is ready
-2. { "extraction_prompt": "<system prompt for extraction>" } - if extraction needed
+- { "final_answer": "<answer>", "method": "<steps>" }
+- { "extraction_prompt": "<system prompt>" }
 
 # Examples
 
-## Example 1: Direct answer exists
-Last tool returned: "The weather in Paris is 22°C and sunny"
-User asked: "What's the weather in Paris?"
-→ Return final_answer: "The weather in Paris is 22°C and sunny"
+Query: "What's the weather in Paris?"
+Last result: "22°C and sunny in Paris"
+→ final_answer: "The weather in Paris is 22°C and sunny"
 
-## Example 2: Extraction needed
-Multiple tools returned raw API data, HTML content, or scattered facts
-→ Return extraction_prompt with instructions to synthesize the information
+Query: "Compare prices across sites"
+Results: [raw JSON from 3 sites]
+→ extraction_prompt: "Extract prices from each site, format as comparison table"
 
-IMPORTANT: Prefer returning final_answer when possible to avoid unnecessary processing.`;
+PREFER final_answer to avoid unnecessary processing.`;
 
 const DECISION_OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
@@ -126,18 +123,13 @@ Purpose:
     {
       type: 'llm',
       system_prompt: DECISION_SYSTEM_PROMPT,
-      message: `Analyze the conversation and decide: return final_answer directly OR return extraction_prompt.
+      message: `Decide: return final_answer directly OR return extraction_prompt.
 
 <messages>
 {{{messages_history}}}
 </messages>
 
-If the last tool result already answers the user's query completely, return:
-- final_answer: The answer (use last tool's result if already well-formatted)
-- method: Brief description of steps taken
-
-Otherwise, return:
-- extraction_prompt: A system prompt for extracting and summarizing the scattered information`,
+Return final_answer if last result answers the query. Return extraction_prompt if synthesis needed.`,
       intelligence: 'LOW',
       output_schema: DECISION_OUTPUT_SCHEMA
     },
@@ -145,15 +137,13 @@ Otherwise, return:
       type: 'llm',
       skip_if: (ctx: StepContext) => !!ctx.final_answer,
       system_prompt: '{{{extraction_prompt}}}',
-      message: `Extract and summarize the relevant information. Focus on data that directly addresses the user's intent.
+      message: `Extract and summarize information for the user.
 
 <messages>
 {{{messages_history}}}
 </messages>
 
-In your response:
-1. 'final_answer' field: Provide a clean, user-friendly summary of the relevant information with no redundancy
-2. 'method' field: Briefly describe the steps taken to gather this data (2-3 lines for bookkeeping purposes)`,
+Provide: final_answer (clean, user-friendly summary) and method (brief steps taken).`,
       intelligence: 'MEDIUM',
       output_schema: FINAL_OUTPUT_SCHEMA
     }

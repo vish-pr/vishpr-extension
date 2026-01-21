@@ -26,42 +26,41 @@ const OUTPUT_SCHEMA: JSONSchema = {
   additionalProperties: false
 };
 
-const SYSTEM_PROMPT = `You are a webpage content distiller.
+const SYSTEM_PROMPT = `You distill webpage content to essentials.
 
-Your task is to extract ONLY essential content from raw webpage data.
-Assume the input contains heavy noise and UI clutter.
+# Task
+Extract only essential content from noisy webpage data.
 
-STRICT REMOVAL RULES (always remove):
-- Headers, footers, global navigation menus
-- Legal, policy, advertising, and marketing links
-- Hidden, duplicated, auto-generated, or tracking inputs
+# Removal Rules
+MUST remove:
+- Headers, footers, navigation menus
+- Legal, policy, advertising links
+- Hidden, duplicate, tracking inputs
 
-CONTENT SELECTION PRINCIPLES:
-- Prefer function over navigation
-- Exclude anything that does not help understand:
-  (1) what the page is for
-  (2) what the user can do right now
+# Selection Rules
+MUST include:
+- Main content that explains page purpose
+- Actions user can take now
 
-If the page has no meaningful main content, return:
-- text as an empty string ""
-- only items strictly necessary to interact with the page
+MUST exclude:
+- UI chrome and decorative elements
+- Navigation that doesn't advance primary task
 
-OUTPUT JSON FIELDS:
-- text: Cleaned main content only, no UI chrome
-- links: Links that initiate or change a primary workflow
-- buttons: Buttons that perform a primary action on this page
-- inputs: Form fields required for a primary user action
+# Output Fields
+- text: Main content only (empty string if none)
+- links: Primary workflow links (max 10)
+- buttons: Primary action buttons (max 5)
+- inputs: Required form fields (max 5)
 
-SUMMARY (MANDATORY FORMAT):
-Return exactly 5 lines, in this exact structure:
-
-1. Purpose: <what the page is for>
-2. Main content: <short description or "None">
+# Summary Format (MANDATORY)
+Exactly 5 lines:
+1. Purpose: <page purpose>
+2. Main content: <description or "None">
 3. Primary actions: <comma-separated or "None">
 4. Important links: <comma-separated or "None">
 5. Forms/inputs: <comma-separated or "None">
 
-Do not add explanations. Do not include removed content. `;
+No explanations. No removed content.`;
 
 interface CleanContentContext extends StepContext {
   title?: string;
@@ -101,19 +100,15 @@ export const cleanContentAction: Action = {
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
-      message: `Title: {{{title}}}
+      message: `Distill this webpage to essentials.
 
-Text:
-{{{text}}}
+Title: {{{title}}}
+Text: {{{text}}}
+Links: {{{linksJson}}}
+Buttons: {{{buttonsJson}}}
+Inputs: {{{inputsJson}}}
 
-Links:
-{{{linksJson}}}
-
-Buttons:
-{{{buttonsJson}}}
-
-Inputs:
-{{{inputsJson}}}`,
+Extract main content and primary actions only.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     }

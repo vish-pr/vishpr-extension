@@ -526,9 +526,8 @@ function setupModelsSection() {
 
 function updateHeaderTitle() {
   const hasEndpoints = Object.keys(currentEndpoints).length > 0;
-  document.getElementById('statusDot')?.classList.toggle('active', hasEndpoints);
-  const text = document.getElementById('statusText');
-  if (text) text.textContent = hasEndpoints ? 'Ready' : 'No Endpoints';
+  elements.statusDot?.classList.toggle('active', hasEndpoints);
+  if (elements.statusText) elements.statusText.textContent = hasEndpoints ? 'Ready' : 'No Endpoints';
 }
 
 async function toggleSettings(show) {

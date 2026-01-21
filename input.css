@@ -536,3 +536,185 @@ body { @apply flex flex-col; }
   font-style: normal;
 }
 
+/* ==========================================================================
+   User Clarification Overlay
+   ========================================================================== */
+
+.clarification-panel {
+  @apply relative p-0 pt-0 overflow-visible max-w-sm;
+}
+
+/* Lifeline timer - the visual heartbeat */
+.clarification-lifeline {
+  @apply flex items-center gap-3 px-4 py-3 border-b border-base-content/10;
+}
+
+.lifeline-track {
+  @apply flex-1 h-1.5 bg-base-content/10 rounded-full overflow-hidden;
+}
+
+.lifeline-fill {
+  @apply h-full bg-primary rounded-full transition-all duration-100 ease-linear;
+  width: 100%;
+}
+
+.lifeline-time {
+  @apply font-mono text-sm tabular-nums text-base-content/60;
+}
+
+.lifeline-time .timer-seconds {
+  @apply text-primary font-semibold;
+}
+
+/* Urgency states */
+.clarification-panel[data-urgency="warning"] .lifeline-fill {
+  @apply bg-warning;
+}
+.clarification-panel[data-urgency="warning"] .timer-seconds {
+  @apply text-warning;
+}
+.clarification-panel[data-urgency="critical"] .lifeline-fill {
+  @apply bg-error;
+  animation: urgentPulse 0.6s ease-in-out infinite;
+}
+.clarification-panel[data-urgency="critical"] .timer-seconds {
+  @apply text-error;
+}
+
+@keyframes urgentPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Question */
+.clarification-question {
+  @apply px-4 pt-4 pb-2 text-center;
+}
+
+.clarification-question .question-text {
+  @apply text-base font-semibold text-base-content m-0 leading-snug;
+}
+
+.clarification-question .question-context {
+  @apply text-xs text-base-content/50 mt-1;
+}
+
+.clarification-question .question-context:empty {
+  @apply hidden;
+}
+
+/* Options wrapper */
+.clarification-options-wrap {
+  @apply px-4 py-2;
+}
+
+.options-status {
+  @apply flex items-center justify-between mb-2;
+}
+
+.options-status .options-label {
+  @apply text-xs font-medium text-base-content/40 uppercase tracking-wide;
+}
+
+.clarification-options {
+  @apply flex flex-col gap-2;
+}
+
+/* Skeleton loading */
+.option-skeleton {
+  @apply h-12 rounded-lg;
+}
+
+.option-skeleton:nth-child(2) { animation-delay: 0.1s; }
+.option-skeleton:nth-child(3) { animation-delay: 0.2s; }
+
+.clarification-options.loaded .option-skeleton {
+  @apply hidden;
+}
+
+/* Option buttons */
+.clarification-option {
+  @apply btn-outline border-base-content/15;
+  opacity: 0;
+  transform: translateY(6px);
+  animation: optionReveal 0.2s ease forwards;
+}
+
+.clarification-option:nth-child(4) { animation-delay: 0.03s; }
+.clarification-option:nth-child(5) { animation-delay: 0.06s; }
+.clarification-option:nth-child(6) { animation-delay: 0.09s; }
+
+@keyframes optionReveal {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.clarification-option .option-rank {
+  @apply badge-ghost border-0 bg-base-content/10;
+}
+
+.clarification-option .option-confidence {
+  @apply opacity-60;
+}
+
+/* Recommended (first option) */
+.clarification-option.recommended {
+  @apply btn-primary;
+}
+
+.clarification-option.recommended .option-rank {
+  @apply bg-primary-content/20 text-primary-content;
+}
+
+.clarification-option.recommended .option-confidence {
+  @apply progress-primary opacity-80;
+  /* Invert for visibility on primary bg */
+  filter: brightness(1.5);
+}
+
+/* Selected state */
+.clarification-option.selected {
+  @apply btn-success;
+  animation: selectBounce 0.25s ease;
+}
+
+@keyframes selectBounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.97); }
+}
+
+/* Custom input section */
+.clarification-custom {
+  @apply px-4 pb-4;
+}
+
+/* Progress dots */
+.clarification-progress {
+  @apply flex justify-center gap-2 py-3;
+}
+
+.clarification-progress:empty {
+  @apply hidden;
+}
+
+.clarification-progress .dot {
+  @apply w-2 h-2 rounded-full bg-base-content/20 transition-all;
+}
+
+.clarification-progress .dot.active {
+  @apply w-6 rounded bg-primary;
+}
+
+.clarification-progress .dot.completed {
+  @apply bg-success;
+}
+
+/* Hint */
+.clarification-hint {
+  @apply px-4 pb-3;
+}
+
+/* Paused indicator */
+.clarification-paused {
+  @apply absolute -top-3 left-1/2 -translate-x-1/2 z-10;
+}
+

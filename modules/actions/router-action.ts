@@ -6,6 +6,7 @@ import type { Action } from './types/index.js';
 import { BROWSER_ACTION } from './browser-actions.js';
 import { FINAL_RESPONSE } from './final-response-action.js';
 import { LLM_TOOL } from './llm-action.js';
+import { USER_CLARIFICATION } from './clarification-actions.js';
 
 export const BROWSER_ROUTER = 'BROWSER_ROUTER';
 
@@ -30,29 +31,58 @@ export const routerAction: Action = {
   steps: [
     {
       type: 'llm',
-      system_prompt: `You are a browser assistant that routes user requests to appropriate tools.
+      system_prompt: `You route user requests to appropriate tools.
 Current time: {{{current_datetime}}}
 
-Tools:
-- BROWSER_ACTION: Web page interaction (reading, clicking, forms, navigation)
-- LLM_TOOL: General knowledge, analysis, reasoning (no browser needed)
-- FINAL_RESPONSE: Task complete, present result to user
+# Tools
+- BROWSER_ACTION: Web page interaction (read, click, type, navigate)
+- LLM_TOOL: General knowledge, reasoning (no browser needed)
+- USER_CLARIFICATION: Ask user for input when context is unclear or choice needed
+- FINAL_RESPONSE: Task complete, present result
 
-Guidelines:
-- Break complex tasks into smaller steps
-- Use BROWSER_ACTION for anything involving web pages
-- Use LLM_TOOL for general knowledge questions
-- Always finish with FINAL_RESPONSE
+# Rules
+MUST use BROWSER_ACTION for:
+- Reading page content, clicking elements, filling forms
+- Any task requiring current web data
+
+MUST use LLM_TOOL for:
+- General knowledge questions
+- Analysis or reasoning tasks
+- Planning without web interaction
+
+MUST use USER_CLARIFICATION when:
+- User request is ambiguous or lacks necessary context
+- Multiple valid options exist and user preference matters
+- Confirmation needed before important actions
+
+MUST use FINAL_RESPONSE when:
+- Task objective is achieved
+- Sufficient information gathered
+
+SHOULD:
+- Break complex tasks into single steps
+- Gather information before concluding
+- Ask for clarification rather than assume
+
+# Examples
+"Search for X" → BROWSER_ACTION (needs web)
+"What is X?" → LLM_TOOL (general knowledge)
+"Find me a laptop" → USER_CLARIFICATION (needs budget, specs preference)
+"I found the price is $99" → FINAL_RESPONSE (task done)
 
 {{{decisionGuide}}}`,
-      message: `Browser: {{{browser_state}}}
-Goal: {{{user_message}}}
-Choose a tool. Use {{{stop_action}}} if complete.`,
+      message: `Route this request to the appropriate tool.
+
+Browser state: {{{browser_state}}}
+User goal: {{{user_message}}}
+
+Select the best tool. Use {{{stop_action}}} when objective is complete.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [
           BROWSER_ACTION,
           LLM_TOOL,
+          USER_CLARIFICATION,
           FINAL_RESPONSE
         ],
         stop_action: FINAL_RESPONSE,

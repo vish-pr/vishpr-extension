@@ -1,9 +1,11 @@
 /**
  * Debug Mode - Action execution with trace/critique visualization
  */
+import { elements } from '../dom.js';
 import { renderModelStats, renderActionStats } from '../ui-settings.js';
 import { getModelStatsCounter, getActionStatsCounter } from './time-bucket-counter.js';
 import { getChatStatus } from '../chat.js';
+import { getTraces, getTraceById, deleteTrace } from './trace-collector.js';
 
 // SVG icons for consistent rendering
 const ICONS = {
@@ -33,68 +35,31 @@ function findCritiqueResult(trace) {
   return null;
 }
 
-const ACTIONS = [
-  { name: 'READ_PAGE', desc: 'Extract page content', params: {} },
-  { name: 'CLICK_ELEMENT', desc: 'Click element by ID', params: { elementId: 'string' } },
-  { name: 'NAVIGATE_TO', desc: 'Go to URL', params: { url: 'string' } },
-  { name: 'FILL_FORM', desc: 'Fill form fields', params: { form_fields: '[{elementId, value}]' } },
-  { name: 'SCROLL_TO', desc: 'Scroll page', params: { direction: '"up"|"down"' } },
-  { name: 'BROWSER_ROUTER', desc: 'Natural language command', params: { user_message: 'string' } },
-];
-
-let state = { history: [], selected: -1, running: false, tabId: null };
-let els = {};
+let state = { history: [], selected: -1, tabId: null };
 
 export async function initDebug() {
-  els = {
-    toggle: document.getElementById('debugToggle'),
-    container: document.getElementById('debugContainer'),
-    chat: document.getElementById('chatContainer'),
-    input: document.getElementById('debugInput'),
-    inputArea: document.querySelector('.bg-base-200.border-t'), // chat input area
-    runBtn: document.getElementById('debugRunBtn'),
-    autocomplete: document.getElementById('debugAutocomplete'),
-    params: document.getElementById('debugParams'),
-    history: document.getElementById('debugHistory'),
-    clearBtn: document.getElementById('debugClearBtn'),
-    timeline: document.getElementById('debugTimeline'),
-    timing: document.getElementById('debugTiming'),
-    badge: document.getElementById('debugCritiqueBadge'),
-    refreshBtn: document.getElementById('debugRefreshBtn'),
-    // Debug tabs
-    traceTab: document.getElementById('debugTraceTab'),
-    statsTab: document.getElementById('debugStatsTab'),
-    tabs: document.querySelectorAll('[data-debug-tab]'),
-    statsRefreshBtn: document.getElementById('debugStatsRefreshBtn'),
-  };
-
-  els.toggle.addEventListener('click', toggleMode);
-  els.input.addEventListener('input', onInput);
-  els.input.addEventListener('keydown', onKeydown);
-  els.input.addEventListener('focus', () => showAutocomplete(ACTIONS));
-  els.input.addEventListener('blur', () => setTimeout(hideAutocomplete, 150));
-  els.runBtn.addEventListener('click', execute);
-  els.clearBtn.addEventListener('click', reloadTraces);
-  els.refreshBtn.addEventListener('click', refreshCritique);
+  elements.debugToggle.addEventListener('click', toggleMode);
+  elements.debugClearBtn.addEventListener('click', reloadTraces);
+  elements.debugRefreshBtn.addEventListener('click', refreshCritique);
 
   // Tab switching
-  els.tabs.forEach(tab => {
+  document.querySelectorAll('[data-debug-tab]').forEach(tab => {
     tab.addEventListener('click', () => switchDebugTab(tab.dataset.debugTab));
   });
 
   // Stats refresh
-  els.statsRefreshBtn.addEventListener('click', refreshStats);
+  elements.debugStatsRefreshBtn.addEventListener('click', refreshStats);
 
   state.tabId = await getCurrentTabId();
   await loadStoredTraces();
 }
 
 async function switchDebugTab(tabName) {
-  els.tabs.forEach(tab => {
+  document.querySelectorAll('[data-debug-tab]').forEach(tab => {
     tab.classList.toggle('tab-active', tab.dataset.debugTab === tabName);
   });
-  els.traceTab.classList.toggle('hidden', tabName !== 'trace');
-  els.statsTab.classList.toggle('hidden', tabName !== 'stats');
+  elements.debugTraceTab.classList.toggle('hidden', tabName !== 'trace');
+  elements.debugStatsTab.classList.toggle('hidden', tabName !== 'stats');
 
   if (tabName === 'stats') {
     await Promise.all([renderModelStats(), renderActionStats()]);
@@ -102,8 +67,8 @@ async function switchDebugTab(tabName) {
 }
 
 async function refreshStats() {
-  els.statsRefreshBtn.disabled = true;
-  els.statsRefreshBtn.classList.add('loading', 'loading-spinner');
+  elements.debugStatsRefreshBtn.disabled = true;
+  elements.debugStatsRefreshBtn.classList.add('loading', 'loading-spinner');
   try {
     // Force reload from storage
     await Promise.all([
@@ -112,8 +77,8 @@ async function refreshStats() {
     ]);
     await Promise.all([renderModelStats(), renderActionStats()]);
   } finally {
-    els.statsRefreshBtn.disabled = false;
-    els.statsRefreshBtn.classList.remove('loading', 'loading-spinner');
+    elements.debugStatsRefreshBtn.disabled = false;
+    elements.debugStatsRefreshBtn.classList.remove('loading', 'loading-spinner');
   }
 }
 
@@ -123,153 +88,25 @@ async function getCurrentTabId() {
 }
 
 function toggleMode() {
-  const isDebug = els.container.classList.toggle('hidden');
-  els.chat.classList.toggle('hidden', !isDebug);
-  els.inputArea.classList.toggle('hidden', !isDebug);
-  els.toggle.classList.toggle('btn-active', !isDebug);
+  const isDebug = elements.debugContainer.classList.toggle('hidden');
+  elements.chatContainer.classList.toggle('hidden', !isDebug);
+  elements.inputArea.classList.toggle('hidden', !isDebug);
+  elements.debugToggle.classList.toggle('btn-active', !isDebug);
 
-  const statusText = document.getElementById('statusText');
-  const statusDot = document.getElementById('statusDot');
   if (isDebug) {
     // Switching to chat mode - restore chat status
     const { text, dotActive } = getChatStatus();
-    statusText.textContent = text;
-    if (statusDot) {
-      statusDot.classList.toggle('active', dotActive);
-    }
+    elements.statusText.textContent = text;
+    elements.statusDot?.classList.toggle('active', dotActive);
   } else {
     // Switching to debug mode
-    statusText.textContent = 'Debug Mode';
-    if (statusDot) {
-      statusDot.classList.remove('active');
-    }
+    elements.statusText.textContent = 'Debug Mode';
+    elements.statusDot?.classList.remove('active');
   }
-}
-
-function onInput(e) {
-  const val = e.target.value.trim().split(' ')[0].toUpperCase();
-  const matches = val ? ACTIONS.filter(a => a.name.includes(val)) : ACTIONS;
-  matches.length && matches[0].name !== val ? showAutocomplete(matches) : hideAutocomplete();
-  const action = ACTIONS.find(a => a.name === val);
-  action ? showParams(action) : hideParams();
-}
-
-function onKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); execute(); }
-  if (e.key === 'Escape') hideAutocomplete();
-}
-
-function showAutocomplete(items) {
-  els.autocomplete.innerHTML = items.map(a =>
-    `<div class="p-2 hover:bg-base-300 cursor-pointer flex justify-between" data-name="${a.name}">
-      <span class="font-mono text-xs">${a.name}</span>
-      <span class="text-xs opacity-50">${a.desc}</span>
-    </div>`
-  ).join('');
-  els.autocomplete.classList.remove('hidden');
-  els.autocomplete.querySelectorAll('[data-name]').forEach(el =>
-    el.addEventListener('click', () => selectAction(el.dataset.name))
-  );
-}
-
-function hideAutocomplete() { els.autocomplete.classList.add('hidden'); }
-
-function selectAction(name) {
-  els.input.value = name + ' ';
-  els.input.focus();
-  hideAutocomplete();
-  const action = ACTIONS.find(a => a.name === name);
-  if (action) showParams(action);
-}
-
-function showParams(action) {
-  const keys = Object.keys(action.params);
-  if (!keys.length) return hideParams();
-  els.params.innerHTML = keys.map(k => `
-    <div class="flex items-center gap-2 mb-1">
-      <label class="opacity-50 min-w-20">${k}</label>
-      <input type="text" data-param="${k}" class="input input-xs input-bordered flex-1 font-mono" placeholder="${action.params[k]}">
-    </div>
-  `).join('');
-  els.params.classList.remove('hidden');
-}
-
-function hideParams() { els.params.classList.add('hidden'); }
-
-function getParams() {
-  const params = {};
-  els.params.querySelectorAll('[data-param]').forEach(el => {
-    if (el.value.trim()) {
-      try { params[el.dataset.param] = JSON.parse(el.value); }
-      catch { params[el.dataset.param] = el.value; }
-    }
-  });
-  return params;
-}
-
-async function execute() {
-  if (state.running) return;
-  const input = els.input.value.trim();
-  if (!input) return;
-
-  const [actionName, ...rest] = input.split(' ');
-  let params;
-  if (rest.length) {
-    try { params = JSON.parse(rest.join(' ')); }
-    catch (e) { return showError(`Invalid JSON: ${e.message}`); }
-  } else {
-    params = getParams();
-  }
-  if (!params.tabId) params.tabId = state.tabId;
-
-  const action = ACTIONS.find(a => a.name === actionName.toUpperCase());
-  if (!action) return showError(`Unknown: ${actionName}`);
-
-  state.running = true;
-  els.runBtn.disabled = true;
-  const run = { id: null, action: actionName.toUpperCase(), params, time: new Date(), status: 'running' };
-
-  showRunning(run);
-
-  try {
-    const res = await chrome.runtime.sendMessage({
-      type: 'DEBUG_EXECUTE', actionName: actionName.toUpperCase(), params, tabId: state.tabId
-    });
-    run.id = res.traceId;
-    run.status = res.error ? 'error' : 'success';
-    run.trace = res.trace;
-    run.error = res.error;
-    run.duration = res.trace?.duration;
-    renderTimeline(run);
-    els.timing.textContent = formatDuration(run.duration);
-  } catch (err) {
-    run.status = 'error';
-    run.error = err.message;
-    showError(err.message);
-  }
-
-  state.history.unshift(run);
-  state.selected = 0;
-  renderHistory();
-  state.running = false;
-  els.runBtn.disabled = false;
-
-  // Check for critique after delay
-  setTimeout(() => refreshCritique(), 2000);
-}
-
-function showRunning(run) {
-  els.timeline.innerHTML = `
-    <div class="timeline-running">
-      <div class="timeline-running-pulse"></div>
-      <div class="timeline-running-text">Executing ${run.action}...</div>
-    </div>
-  `;
-  els.badge.textContent = '';
 }
 
 function showError(msg) {
-  els.timeline.innerHTML = `
+  elements.debugTimeline.innerHTML = `
     <div class="timeline-error-block">
       <div class="timeline-error-icon">✕</div>
       <div class="timeline-error-msg">${escapeHtml(msg)}</div>
@@ -301,15 +138,15 @@ function renderTimeline(run) {
   // Critique section as stacked block
   html += renderCritiqueBlock(run);
 
-  els.timeline.innerHTML = html;
+  elements.debugTimeline.innerHTML = html;
 
   // Attach expand/collapse handlers for trace nodes
-  els.timeline.querySelectorAll('.trace-node').forEach(el =>
+  elements.debugTimeline.querySelectorAll('.trace-node').forEach(el =>
     el.querySelector('.trace-header')?.addEventListener('click', () => el.classList.toggle('expanded'))
   );
 
   // Attach expand/collapse handlers for large data blocks
-  els.timeline.querySelectorAll('.trace-collapsible').forEach(el => {
+  elements.debugTimeline.querySelectorAll('.trace-collapsible').forEach(el => {
     el.querySelector('.trace-collapsible-header')?.addEventListener('click', (e) => {
       e.stopPropagation();
       const isCollapsed = el.dataset.collapsed === 'true';
@@ -346,7 +183,7 @@ function renderNode(node, depth = 0) {
   }
   if (node.input) details.push(detailRow('INPUT', `<pre>${escapeHtml(formatKeyValue(node.input))}</pre>`));
   if (node.prompt) details.push(detailRow('PROMPT', `<pre>${escapeHtml(node.prompt)}</pre>`));
-  if (node.output) {
+  if (node.output && node.status !== 'skipped') {
     const outputData = node.output?.result ?? node.output;
     // Filter out usage field
     const filtered = typeof outputData === 'object' && outputData !== null
@@ -390,9 +227,9 @@ function detailRow(label, value) {
 function renderHistory() {
   const getLabel = (run) => {
     if (run.params?.user_message) return run.params.user_message.slice(0, 30) + (run.params.user_message.length > 30 ? '…' : '');
-    return run.action;
+    return run.action || 'Action';  // Fallback for old traces without name in metadata
   };
-  els.history.innerHTML = state.history.map((run, i) => `
+  elements.debugHistory.innerHTML = state.history.map((run, i) => `
     <div class="p-1.5 rounded text-xs cursor-pointer ${i === state.selected ? 'bg-primary/20' : 'hover:bg-base-300'} ${run.status === 'error' ? 'border-l-2 border-error' : ''}" data-idx="${i}">
       <div class="flex items-center gap-1">
         <span class="truncate flex-1">${escapeHtml(getLabel(run))}</span>
@@ -405,12 +242,12 @@ function renderHistory() {
     </div>
   `).join('') || '<div class="opacity-30 text-center p-2">No runs yet</div>';
 
-  els.history.querySelectorAll('[data-idx]').forEach(el =>
+  elements.debugHistory.querySelectorAll('[data-idx]').forEach(el =>
     el.addEventListener('click', (e) => {
       if (!e.target.dataset.delete) selectHistory(parseInt(el.dataset.idx));
     })
   );
-  els.history.querySelectorAll('[data-delete]').forEach(el =>
+  elements.debugHistory.querySelectorAll('[data-delete]').forEach(el =>
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       deleteHistoryItem(parseInt(el.dataset.delete));
@@ -418,22 +255,57 @@ function renderHistory() {
   );
 }
 
-function selectHistory(idx) {
+async function selectHistory(idx) {
+  // Clear trace data from previously selected item to save RAM
+  if (state.selected >= 0 && state.selected !== idx) {
+    const prevRun = state.history[state.selected];
+    if (prevRun) {
+      prevRun.trace = null;
+      prevRun.critique = null;
+    }
+  }
+
   state.selected = idx;
   const run = state.history[idx];
   renderHistory();
+  elements.debugTiming.textContent = run.duration ? formatDuration(run.duration) : '';
+
+  // If trace not loaded, fetch on demand
+  if (!run.trace && run.id) {
+    showLoadingState();
+    try {
+      const traceData = await getTraceById(run.id);
+      if (traceData?.trace) {
+        run.trace = traceData.trace;
+        run.critique = findCritiqueResult(traceData.trace);
+        run.error = traceData.error;
+      }
+    } catch (e) {
+      run.error = e.message;
+      console.error('Failed to load trace:', e);
+    }
+  }
+
   if (run.error && !run.trace) {
     showError(run.error);
   } else {
     renderTimeline(run);
   }
-  els.timing.textContent = run.duration ? formatDuration(run.duration) : '';
+}
+
+function showLoadingState() {
+  elements.debugTimeline.innerHTML = `
+    <div class="debug-empty-state">
+      <div class="timeline-loading-indicator"></div>
+      <div class="debug-empty-text">Loading trace...</div>
+    </div>
+  `;
 }
 
 function renderCritiqueBlock(run) {
   if (!run?.critique) {
-    els.badge.textContent = '...';
-    els.badge.className = 'badge badge-xs badge-ghost';
+    elements.debugCritiqueBadge.textContent = '...';
+    elements.debugCritiqueBadge.className = 'badge badge-xs badge-ghost';
     return `
       <div class="timeline-block timeline-block-critique timeline-block-loading">
         <div class="timeline-block-header">
@@ -450,8 +322,8 @@ function renderCritiqueBlock(run) {
 
   const c = run.critique;
   const issues = (c.prompts?.issues?.length || 0) + (c.efficiency?.issues?.length || 0) + (c.errors?.issues?.length || 0);
-  els.badge.textContent = issues || '✓';
-  els.badge.className = `badge badge-xs ${issues ? 'badge-warning' : 'badge-success'}`;
+  elements.debugCritiqueBadge.textContent = issues || '✓';
+  elements.debugCritiqueBadge.className = `badge badge-xs ${issues ? 'badge-warning' : 'badge-success'}`;
 
   const sections = [
     { key: 'prompts', label: 'PROMPTS', icon: '◇' },
@@ -512,31 +384,32 @@ async function refreshCritique() {
   const run = state.history[state.selected];
 
   // Show loading state
-  els.badge.textContent = '...';
-  els.badge.className = 'badge badge-xs badge-ghost animate-pulse';
+  elements.debugCritiqueBadge.textContent = '...';
+  elements.debugCritiqueBadge.className = 'badge badge-xs badge-ghost animate-pulse';
 
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'GET_TRACE_BY_ID', traceId: run.id });
-    if (res.trace?.trace) {
-      run.trace = res.trace.trace;
-      run.critique = findCritiqueResult(res.trace.trace);
+    const traceData = await getTraceById(run.id);
+    if (traceData?.trace) {
+      run.trace = traceData.trace;
+      run.critique = findCritiqueResult(traceData.trace);
     }
     renderTimeline(run);
   } catch (e) {
-    els.badge.textContent = '!';
-    els.badge.className = 'badge badge-xs badge-error';
+    elements.debugCritiqueBadge.textContent = '!';
+    elements.debugCritiqueBadge.className = 'badge badge-xs badge-error';
     console.error('Refresh failed:', e);
   }
 }
 
 async function loadStoredTraces() {
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'GET_TRACES', limit: 50 });
-    if (res.traces?.length) {
-      state.history = res.traces.map(t => ({
-        id: t.traceId, action: t.trace?.name, params: t.trace?.input, time: new Date(t.timestamp),
-        status: t.status, duration: t.trace?.duration, trace: t.trace, error: t.error,
-        critique: findCritiqueResult(t.trace)
+    const traces = await getTraces(50);
+    if (traces?.length) {
+      // Only store metadata - full trace loaded on demand when selected
+      state.history = traces.map(t => ({
+        id: t.traceId, action: t.name, time: new Date(t.timestamp),
+        status: t.status, duration: t.duration,
+        trace: null, critique: null, error: null  // Loaded on demand
       }));
       renderHistory();
       // Auto-select most recent history item
@@ -555,21 +428,21 @@ async function reloadTraces() {
 }
 
 function showEmptyState() {
-  els.timeline.innerHTML = `
+  elements.debugTimeline.innerHTML = `
     <div class="debug-empty-state">
       <div class="debug-empty-icon">▷</div>
-      <div class="debug-empty-text">Run an action to see trace</div>
+      <div class="debug-empty-text">Select a trace from history</div>
     </div>
   `;
-  els.timing.textContent = '';
-  els.badge.textContent = '';
+  elements.debugTiming.textContent = '';
+  elements.debugCritiqueBadge.textContent = '';
 }
 
 async function deleteHistoryItem(idx) {
   const run = state.history[idx];
   if (!run) return;
 
-  try { await chrome.runtime.sendMessage({ type: 'DELETE_TRACE', traceId: run.id }); } catch {}
+  try { await deleteTrace(run.id); } catch {}
 
   state.history.splice(idx, 1);
   if (state.selected === idx) {

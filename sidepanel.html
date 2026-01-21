@@ -169,22 +169,6 @@
 
   <!-- Debug Container -->
   <div class="hidden flex-1 flex flex-col overflow-hidden" id="debugContainer">
-    <!-- Command Input -->
-    <div class="bg-base-200 border-b border-base-content/10 p-2">
-      <div class="flex gap-2">
-        <div class="flex-1 relative">
-          <input type="text" id="debugInput" class="input input-sm input-bordered w-full font-mono text-xs pr-16" placeholder="Action... (READ_PAGE, CLICK_ELEMENT)" autocomplete="off">
-          <kbd class="kbd kbd-xs absolute right-2 top-1/2 -translate-y-1/2 opacity-50">Enter</kbd>
-        </div>
-        <button id="debugRunBtn" class="btn btn-primary btn-sm gap-1">
-          <svg class="size-3" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
-          Run
-        </button>
-      </div>
-      <div id="debugAutocomplete" class="hidden absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-base-200 border border-base-content/10 rounded-lg shadow-lg"></div>
-      <div id="debugParams" class="hidden mt-2 p-2 bg-base-300 rounded-lg text-xs"></div>
-    </div>
-
     <!-- Debug Tabs -->
     <div role="tablist" class="tabs tabs-boxed bg-base-300 mx-2 mb-2 shrink-0">
       <button role="tab" class="tab tab-active text-xs" data-debug-tab="trace">Trace</button>
@@ -215,7 +199,7 @@
         <div id="debugTimeline" class="flex-1 overflow-y-auto">
           <div class="debug-empty-state">
             <div class="debug-empty-icon">▷</div>
-            <div class="debug-empty-text">Run an action to see trace</div>
+            <div class="debug-empty-text">Select a trace from history</div>
           </div>
         </div>
       </div>
@@ -438,6 +422,84 @@
       </div>
       <span class="skip-ratio text-[10px] font-mono tabular-nums opacity-50 w-12 text-right"></span>
     </div>
+  </template>
+
+  <!-- User Clarification Overlay -->
+  <dialog id="clarificationOverlay" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box clarification-panel">
+      <!-- Timer bar - the "lifeline" -->
+      <div class="clarification-lifeline">
+        <div class="lifeline-track">
+          <div class="lifeline-fill"></div>
+        </div>
+        <div class="lifeline-time">
+          <span class="timer-seconds">15</span>
+        </div>
+      </div>
+
+      <!-- Question -->
+      <div class="clarification-question">
+        <h3 class="question-text"></h3>
+        <p class="question-context"></p>
+      </div>
+
+      <!-- Options -->
+      <div class="clarification-options-wrap">
+        <div class="options-status">
+          <span class="options-label">Choose an option</span>
+          <span class="options-loading hidden">
+            <span class="loading loading-dots loading-xs"></span>
+          </span>
+        </div>
+        <div class="clarification-options">
+          <div class="option-skeleton skeleton"></div>
+          <div class="option-skeleton skeleton"></div>
+          <div class="option-skeleton skeleton"></div>
+        </div>
+      </div>
+
+      <!-- Custom input -->
+      <div class="clarification-custom">
+        <div class="divider text-xs opacity-50 my-2">or type your answer</div>
+        <div class="join w-full">
+          <input type="text" class="input input-bordered input-sm join-item flex-1 clarification-input" placeholder="Something else...">
+          <button class="btn btn-sm btn-primary join-item clarification-submit-btn">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Progress dots -->
+      <div class="clarification-progress"></div>
+
+      <!-- Hint -->
+      <div class="clarification-hint hidden">
+        <div class="alert alert-info text-xs py-2">
+          <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <span class="hint-text"></span>
+        </div>
+      </div>
+
+      <!-- Paused badge -->
+      <div class="clarification-paused hidden">
+        <span class="badge badge-warning badge-sm gap-1">
+          <span class="loading loading-ring loading-xs"></span>
+          Paused
+        </span>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+
+  <!-- Clarification Option Template -->
+  <template id="tpl-clarification-option">
+    <button class="clarification-option btn btn-block justify-between h-auto min-h-0 py-3 px-4 gap-3">
+      <div class="flex items-center gap-3">
+        <span class="option-rank badge badge-sm font-mono"></span>
+        <span class="option-label text-left font-normal leading-snug"></span>
+      </div>
+      <progress class="option-confidence progress progress-primary w-12 h-1" value="0" max="100"></progress>
+    </button>
   </template>
 
   <script src="sidepanel.js" type="module"></script>

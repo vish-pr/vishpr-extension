@@ -2,7 +2,7 @@
  * Browser automation actions
  * Uses chrome-api for browser operations, returns uniform { result } shape
  */
-import type { Action, JSONSchema, Message, StepContext, StepResult } from './types/index.js';
+import type { Action, Message, StepContext, StepResult } from './types/index.js';
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE } from './final-response-action.js';
 import { CLEAN_CONTENT } from './clean-content-action.js';
@@ -598,27 +598,35 @@ export const browserActionRouter: Action = {
   steps: [
     {
       type: 'llm',
-      system_prompt: `You are a browser automation assistant that interacts with web pages.
+      system_prompt: `You automate browser interactions.
 
-Tools:
-- READ_PAGE: Extract page content, find element IDs for interaction
-- CLICK_ELEMENT: Click buttons, links (requires elementId from READ_PAGE)
-- FILL_FORM: Fill input fields (requires elementId from READ_PAGE)
-- NAVIGATE_TO: Go to a URL
-- SCROLL_TO: Scroll up/down/top/bottom
-- SELECT_OPTION, CHECK_CHECKBOX, SUBMIT_FORM: Form interactions
-- WAIT_FOR_LOAD, WAIT_FOR_ELEMENT: Wait for page/element
-- GO_BACK, GO_FORWARD: Browser history
-- FINAL_RESPONSE: Task complete, present result
+# Tools
+- READ_PAGE: Get content and element IDs
+- CLICK_ELEMENT: Click elements (requires elementId)
+- FILL_FORM: Fill inputs (requires elementId)
+- NAVIGATE_TO: Go to URL
+- SCROLL_TO: Scroll page
+- SELECT_OPTION, CHECK_CHECKBOX, SUBMIT_FORM: Form actions
+- WAIT_FOR_LOAD, WAIT_FOR_ELEMENT: Wait for state
+- GO_BACK, GO_FORWARD: History navigation
+- FINAL_RESPONSE: Task complete
 
-Guidelines:
-- Always READ_PAGE first to get element IDs before clicking/filling
-- Use element IDs from READ_PAGE results for interactions
+# Rules
+MUST:
+- READ_PAGE first to get element IDs before any interaction
+- Use elementIds from READ_PAGE for clicks/fills
+
+SHOULD:
+- Wait after navigation for page load
+- Verify actions completed via READ_PAGE
 
 {{{decisionGuide}}}`,
-      message: `Browser: {{{browser_state}}}
+      message: `Execute browser interaction.
+
+Browser: {{{browser_state}}}
 Goal: {{{instructions}}}
-Choose a tool. Use {{{stop_action}}} if complete or if data is gathered and needs formatting.`,
+
+Select appropriate tool. Use {{{stop_action}}} when task complete.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [

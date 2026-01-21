@@ -4,9 +4,90 @@
  */
 import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
-import { actionsRegistry, resolveStepTemplates, CRITIQUE } from './actions/index.js';
+import { actionsRegistry, resolveStepTemplates, CRITIQUE, USER_CLARIFICATION } from './actions/index.js';
 import { tracer, getTraceById } from './debug/trace-collector.js';
 import { getActionStatsCounter } from './debug/time-bucket-counter.js';
+
+/**
+ * Show clarification UI with loading state immediately
+ * Returns promise that resolves when user responds
+ */
+async function showClarificationLoading(questions) {
+  if (typeof document !== 'undefined') {
+    const ui = await import('./clarification-ui.js');
+    ui.showClarificationLoading(questions);
+    return ui.getClarificationResponse();
+  }
+
+  // Service worker context - send message to sidepanel
+  return new Promise((resolve) => {
+    const handleResponse = (message) => {
+      if (message.action === 'clarificationResponse') {
+        chrome.runtime.onMessage.removeListener(handleResponse);
+        resolve(message.responses);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handleResponse);
+
+    chrome.runtime.sendMessage({
+      action: 'showClarificationLoading',
+      questions
+    }).catch(() => {
+      chrome.runtime.onMessage.removeListener(handleResponse);
+      resolve(questions.map((_, i) => ({ value: '', timed_out: true, question_index: i })));
+    });
+  });
+}
+
+/**
+ * Update clarification UI with generated options
+ */
+async function updateClarificationOptions(config) {
+  if (typeof document !== 'undefined') {
+    const { updateClarificationOptions } = await import('./clarification-ui.js');
+    updateClarificationOptions(config);
+  } else {
+    chrome.runtime.sendMessage({ action: 'updateClarificationOptions', config }).catch(() => {});
+  }
+}
+
+/**
+ * Request clarification UI - sends message to sidepanel if in service worker context
+ */
+async function requestClarification(config) {
+  // Check if we're in a context with DOM (sidepanel)
+  if (typeof document !== 'undefined') {
+    const { showClarification } = await import('./clarification-ui.js');
+    return showClarification(config);
+  }
+
+  // Service worker context - send message to sidepanel
+  return new Promise((resolve) => {
+    const handleResponse = (message) => {
+      if (message.action === 'clarificationResponse') {
+        chrome.runtime.onMessage.removeListener(handleResponse);
+        resolve(message.responses);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handleResponse);
+
+    // Send to sidepanel
+    chrome.runtime.sendMessage({
+      action: 'showClarification',
+      config
+    }).catch(() => {
+      // If no sidepanel listening, return defaults
+      chrome.runtime.onMessage.removeListener(handleResponse);
+      resolve(
+        (config.default_answers || []).map((value, i) => ({
+          value,
+          timed_out: true,
+          question_index: i
+        }))
+      );
+    });
+  });
+}
 
 const TIMEOUT_MS = 20000;
 
@@ -50,6 +131,12 @@ export async function executeAction(action, params, parent_messages = null, trac
       tracer.endAction(actionUUID, startTime, null, error);
       throw error;
     }
+  }
+
+  // Special handling for USER_CLARIFICATION: show UI immediately with loading state
+  let clarificationResponsePromise = null;
+  if (action.name === USER_CLARIFICATION && params.questions?.length > 0) {
+    clarificationResponsePromise = showClarificationLoading(params.questions);
   }
 
   let context = { ...params, parent_messages };
@@ -101,6 +188,41 @@ export async function executeAction(action, params, parent_messages = null, trac
       tracer.endAction(actionUUID, startTime, null, error);
       getActionStatsCounter().increment(action.name, 'errors').catch(() => {});
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
+    }
+  }
+
+  // Check for special user_clarification return type
+  if (lastStepOutput?.type === 'user_clarification') {
+    try {
+      let responses;
+      if (clarificationResponsePromise) {
+        // UI was already shown with loading state - update it with options
+        updateClarificationOptions(lastStepOutput);
+        responses = await clarificationResponsePromise;
+      } else {
+        // Fallback: show UI normally (shouldn't happen for USER_CLARIFICATION action)
+        responses = await requestClarification(lastStepOutput);
+      }
+      // Inject user response back into result
+      lastStepOutput = {
+        ...lastStepOutput,
+        user_responses: responses,
+        clarification_completed: true
+      };
+      context = { ...context, ...lastStepOutput };
+    } catch (err) {
+      console.error('Clarification UI error:', err);
+      // Continue with default answers on error
+      lastStepOutput = {
+        ...lastStepOutput,
+        user_responses: lastStepOutput.default_answers?.map((value, i) => ({
+          value,
+          timed_out: true,
+          question_index: i
+        })) || [],
+        clarification_completed: true,
+        clarification_error: err.message
+      };
     }
   }
 

@@ -25,10 +25,9 @@ async function setStatus(text, isProcessing = false) {
   const dotActive = isProcessing || Object.keys(await getEndpoints()).length > 0;
   chatStatus = { text, dotActive };
 
-  if (document.getElementById('debugContainer')?.classList.contains('hidden') !== false) {
-    const statusText = document.getElementById('statusText');
-    if (statusText) statusText.textContent = text;
-    document.getElementById('statusDot')?.classList.toggle('active', dotActive);
+  if (elements.debugContainer?.classList.contains('hidden') !== false) {
+    if (elements.statusText) elements.statusText.textContent = text;
+    elements.statusDot?.classList.toggle('active', dotActive);
   }
 }
 
