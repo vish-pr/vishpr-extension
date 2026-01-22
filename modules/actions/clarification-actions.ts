@@ -1,10 +1,98 @@
 /**
  * USER_CLARIFICATION action
  *
- * Generates options for a clarification question, returns special type for UI handling.
- * Executor shows modal, user picks option or times out, response injected back.
+ * Shows clarification UI with loading state, generates options via LLM,
+ * updates UI with options, waits for user response or timeout.
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
+
+declare const chrome: {
+  runtime: {
+    sendMessage: (msg: unknown) => Promise<void>;
+    onMessage: {
+      addListener: (fn: (msg: { action: string; responses?: unknown[] }) => void) => void;
+      removeListener: (fn: (msg: { action: string; responses?: unknown[] }) => void) => void;
+    };
+  };
+};
+
+// Module-level state for pending response promise
+let pendingResponsePromise: Promise<UserResponse[]> | null = null;
+
+interface UserResponse {
+  value: string;
+  timed_out: boolean;
+  question_index: number;
+}
+
+// Context-aware UI helpers (handle both document and service worker contexts)
+async function showLoadingUI(questions: Question[]): Promise<UserResponse[]> {
+  if (typeof document !== 'undefined') {
+    const ui = await import('../clarification-ui.js');
+    ui.showClarificationLoading(questions);
+    return ui.getClarificationResponse();
+  }
+
+  // Service worker context - send message to sidepanel
+  return new Promise((resolve) => {
+    const handleResponse = (message: { action: string; responses?: UserResponse[] }) => {
+      if (message.action === 'clarificationResponse') {
+        chrome.runtime.onMessage.removeListener(handleResponse);
+        resolve(message.responses || []);
+      }
+    };
+    chrome.runtime.onMessage.addListener(handleResponse);
+
+    chrome.runtime.sendMessage({
+      action: 'showClarificationLoading',
+      questions
+    }).catch(() => {
+      chrome.runtime.onMessage.removeListener(handleResponse);
+      resolve(questions.map((_, i) => ({ value: '', timed_out: true, question_index: i })));
+    });
+  });
+}
+
+async function updateOptionsUI(config: ClarificationResult): Promise<void> {
+  if (typeof document !== 'undefined') {
+    const { updateClarificationOptions } = await import('../clarification-ui.js');
+    updateClarificationOptions(config);
+  } else {
+    chrome.runtime.sendMessage({ action: 'updateClarificationOptions', config }).catch(() => {});
+  }
+}
+
+// Step 1: Show loading UI immediately
+async function showLoadingUIStep(ctx: StepContext): Promise<StepResult> {
+  const questions = ctx.questions as Question[];
+  if (questions?.length > 0) {
+    pendingResponsePromise = showLoadingUI(questions);
+  }
+  return { result: {} };
+}
+
+// Step 3: Wait for user response and build final result
+async function waitForResponseStep(ctx: StepContext): Promise<StepResult<ClarificationResult>> {
+  const questions = ctx.questions as Question[];
+  const generated = (ctx as Record<string, unknown>).generated as ClarificationResult['generated'];
+
+  let user_responses: UserResponse[] = [];
+  if (pendingResponsePromise) {
+    await updateOptionsUI({ type: 'user_clarification', questions, generated });
+    user_responses = await pendingResponsePromise;
+    pendingResponsePromise = null;
+  }
+
+  return {
+    result: {
+      type: 'user_clarification',
+      questions,
+      generated,
+      user_responses,
+      clarification_completed: true
+    }
+  };
+}
 
 export const USER_CLARIFICATION = 'USER_CLARIFICATION';
 
@@ -27,7 +115,8 @@ export interface ClarificationResult {
     question_index: number;
     options: Option[];
   }>;
-  [key: string]: unknown;
+  user_responses?: UserResponse[];
+  clarification_completed?: boolean;
 }
 
 // Schemas
@@ -161,16 +250,6 @@ Context: User asked to clean up temp files, 3 files selected
     {label: "Delete only oldest", confidence: 10, reasoning: "Partial cleanup option"}
   ]`;
 
-function buildResult(ctx: StepContext): StepResult<ClarificationResult> {
-  return {
-    result: {
-      type: 'user_clarification',
-      questions: (ctx.questions as Question[]) || [],
-      generated: ((ctx as Record<string, unknown>).generated as ClarificationResult['generated']) || []
-    }
-  };
-}
-
 // Action definition
 export const userClarificationAction: Action = {
   name: USER_CLARIFICATION,
@@ -182,6 +261,7 @@ export const userClarificationAction: Action = {
   ],
   input_schema: INPUT_SCHEMA,
   steps: [
+    { type: 'function', handler: showLoadingUIStep },
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
@@ -213,7 +293,7 @@ Generate realistic options for each question and rank by confidence.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     },
-    { type: 'function', handler: buildResult }
+    { type: 'function', handler: waitForResponseStep }
   ]
 };
 

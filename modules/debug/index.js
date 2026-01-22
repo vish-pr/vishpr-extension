@@ -116,6 +116,32 @@ export async function initDebug() {
   // State refresh
   elements.debugStateRefreshBtn.addEventListener('click', refreshState);
 
+  // Delegated history sidebar handlers
+  elements.debugHistory.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-delete]');
+    if (del) { e.stopPropagation(); return deleteHistoryItem(+del.dataset.delete); }
+    const item = e.target.closest('[data-idx]');
+    if (item) selectHistory(+item.dataset.idx);
+  });
+
+  // Delegated timeline handlers
+  elements.debugTimeline.addEventListener('click', (e) => {
+    const maxBtn = e.target.closest('.content-maximize-btn');
+    if (maxBtn?.dataset.maximizeId) { e.stopPropagation(); return handleMaximize(maxBtn); }
+    const toolSum = e.target.closest('.tool-call-summary');
+    if (toolSum) { e.stopPropagation(); const p = toolSum.closest('.tool-call-inline'); p.dataset.expanded = p.dataset.expanded !== 'true'; return; }
+    const header = e.target.closest('.trace-header');
+    if (header) header.closest('.trace-node')?.classList.toggle('expanded');
+  });
+
+  // Delegated state tab handlers
+  elements.debugStateContent.addEventListener('click', (e) => {
+    const maxBtn = e.target.closest('.content-maximize-btn');
+    if (maxBtn?.dataset.maximizeId) { e.stopPropagation(); return handleMaximize(maxBtn); }
+    const header = e.target.closest('.state-block-header');
+    if (header) header.closest('.state-block')?.classList.toggle('collapsed');
+  });
+
   state.tabId = await getCurrentTabId();
   await loadStoredTraces();
 }
@@ -209,32 +235,6 @@ function renderTimeline(run) {
   html += renderCritiqueBlock(run);
 
   elements.debugTimeline.innerHTML = html;
-
-  // Attach expand/collapse handlers for trace nodes
-  elements.debugTimeline.querySelectorAll('.trace-node').forEach(el =>
-    el.querySelector('.trace-header')?.addEventListener('click', () => el.classList.toggle('expanded'))
-  );
-
-  // Attach expand/collapse handlers for large data blocks
-  elements.debugTimeline.querySelectorAll('.trace-collapsible').forEach(el => {
-    el.querySelector('.trace-collapsible-header')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isCollapsed = el.dataset.collapsed === 'true';
-      el.dataset.collapsed = isCollapsed ? 'false' : 'true';
-    });
-  });
-
-  // Attach expand/collapse handlers for tool calls
-  elements.debugTimeline.querySelectorAll('.tool-call-inline').forEach(el => {
-    el.querySelector('.tool-call-summary')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isExpanded = el.dataset.expanded === 'true';
-      el.dataset.expanded = isExpanded ? 'false' : 'true';
-    });
-  });
-
-  // Attach maximize button handlers for large content
-  attachMaximizeHandlers(elements.debugTimeline);
 }
 
 function renderNode(node, depth = 0) {
@@ -333,25 +333,16 @@ function renderNode(node, depth = 0) {
 
 // Format content with maximize button if it exceeds threshold
 function formatLargeContent(content, label) {
-  const contentLength = content.length;
-  if (contentLength <= MAXIMIZE_THRESHOLD) {
+  if (content.length <= MAXIMIZE_THRESHOLD) {
     return `<pre>${escapeHtml(content)}</pre>`;
   }
-
-  const sizeLabel = contentLength > 1000000
-    ? `${(contentLength / 1000000).toFixed(1)}M`
-    : contentLength > 1000
-    ? `${(contentLength / 1000).toFixed(1)}K`
-    : `${contentLength}`;
-
-  const uniqueId = `max-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
+  const id = `max-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return `<div class="relative">
-    <button class="content-maximize-btn" data-maximize-id="${uniqueId}" data-label="${escapeHtml(label)}" title="Expand (${sizeLabel} chars)">
+    <button class="content-maximize-btn" data-maximize-id="${id}" data-label="${escapeHtml(label)}" title="Expand (${formatSize(content.length)} chars)">
       ${ICONS.maximize}
     </button>
     <pre>${escapeHtml(content)}</pre>
-    <template id="${uniqueId}">${escapeHtml(content)}</template>
+    <template id="${id}">${escapeHtml(content)}</template>
   </div>`;
 }
 
@@ -376,18 +367,6 @@ function renderHistory() {
       </div>
     </div>
   `).join('') || '<div class="opacity-30 text-center p-2">No runs yet</div>';
-
-  elements.debugHistory.querySelectorAll('[data-idx]').forEach(el =>
-    el.addEventListener('click', (e) => {
-      if (!e.target.dataset.delete) selectHistory(parseInt(el.dataset.idx));
-    })
-  );
-  elements.debugHistory.querySelectorAll('[data-delete]').forEach(el =>
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteHistoryItem(parseInt(el.dataset.delete));
-    })
-  );
 }
 
 async function selectHistory(idx) {
@@ -407,7 +386,7 @@ async function selectHistory(idx) {
 
   // If trace not loaded, fetch on demand
   if (!run.trace && run.id) {
-    showLoadingState();
+    showPlaceholder('loading');
     try {
       const traceData = await getTraceById(run.id);
       if (traceData?.trace) {
@@ -428,13 +407,13 @@ async function selectHistory(idx) {
   }
 }
 
-function showLoadingState() {
-  elements.debugTimeline.innerHTML = `
-    <div class="debug-empty-state">
-      <div class="timeline-loading-indicator"></div>
-      <div class="debug-empty-text">Loading trace...</div>
-    </div>
-  `;
+function showPlaceholder(type) {
+  const isLoading = type === 'loading';
+  elements.debugTimeline.innerHTML = `<div class="debug-empty-state">
+    <div class="${isLoading ? 'timeline-loading-indicator' : 'debug-empty-icon'}">▷</div>
+    <div class="debug-empty-text">${isLoading ? 'Loading trace...' : 'Select a trace from history'}</div>
+  </div>`;
+  if (!isLoading) { elements.debugTiming.textContent = ''; elements.debugCritiqueBadge.textContent = ''; }
 }
 
 function renderCritiqueBlock(run) {
@@ -460,36 +439,26 @@ function renderCritiqueBlock(run) {
   elements.debugCritiqueBadge.textContent = issues || '✓';
   elements.debugCritiqueBadge.className = `badge badge-xs ${issues ? 'badge-warning' : 'badge-success'}`;
 
-  const sections = [
-    { key: 'prompts', label: 'PROMPTS', icon: '◇' },
-    { key: 'efficiency', label: 'EFFICIENCY', icon: '◆' },
-    { key: 'errors', label: 'ERRORS', icon: '◈' },
-  ];
+  const renderItem = i => `<div class="critique-item critique-item-${i.severity || 'low'}">
+    <div class="critique-item-header">
+      <span class="critique-item-location">${escapeHtml(i.location)}</span>
+      <span class="critique-item-severity critique-item-severity-${i.severity || 'low'}">${i.severity?.toUpperCase() || 'LOW'}</span>
+    </div>
+    <div class="critique-item-problem">${escapeHtml(i.problem)}</div>
+    ${i.suggestion ? `<div class="critique-item-suggestion">${escapeHtml(i.suggestion)}</div>` : ''}
+  </div>`;
 
-  const sectionsHtml = sections.map(s => {
-    const items = c[s.key]?.issues || [];
-    return items.length ? `
-      <div class="critique-section">
-        <div class="critique-section-header">
-          <span class="critique-section-icon">${s.icon}</span>
-          <span class="critique-section-title">${s.label}</span>
-          <span class="critique-section-count">${items.length}</span>
-        </div>
-        <div class="critique-section-items">
-          ${items.map(i => `
-            <div class="critique-item critique-item-${i.severity || 'low'}">
-              <div class="critique-item-header">
-                <span class="critique-item-location">${escapeHtml(i.location)}</span>
-                <span class="critique-item-severity critique-item-severity-${i.severity || 'low'}">${i.severity?.toUpperCase() || 'LOW'}</span>
-              </div>
-              <div class="critique-item-problem">${escapeHtml(i.problem)}</div>
-              ${i.suggestion ? `<div class="critique-item-suggestion">${escapeHtml(i.suggestion)}</div>` : ''}
-            </div>
-          `).join('')}
-        </div>
+  const section = (key, label, icon) => {
+    const items = c[key]?.issues || [];
+    return items.length ? `<div class="critique-section">
+      <div class="critique-section-header">
+        <span class="critique-section-icon">${icon}</span>
+        <span class="critique-section-title">${label}</span>
+        <span class="critique-section-count">${items.length}</span>
       </div>
-    ` : '';
-  }).join('');
+      <div class="critique-section-items">${items.map(renderItem).join('')}</div>
+    </div>` : '';
+  };
 
   return `
     <div class="timeline-block timeline-block-critique ${issues ? 'has-issues' : 'no-issues'}">
@@ -508,7 +477,7 @@ function renderCritiqueBlock(run) {
             </ol>
           </div>
         ` : ''}
-        ${sectionsHtml}
+        ${section('prompts', 'PROMPTS', '◇')}${section('efficiency', 'EFFICIENCY', '◆')}${section('errors', 'ERRORS', '◈')}
       </div>
     </div>
   `;
@@ -558,19 +527,8 @@ async function reloadTraces() {
   if (state.history.length > 0) {
     selectHistory(0);
   } else {
-    showEmptyState();
+    showPlaceholder('empty');
   }
-}
-
-function showEmptyState() {
-  elements.debugTimeline.innerHTML = `
-    <div class="debug-empty-state">
-      <div class="debug-empty-icon">▷</div>
-      <div class="debug-empty-text">Select a trace from history</div>
-    </div>
-  `;
-  elements.debugTiming.textContent = '';
-  elements.debugCritiqueBadge.textContent = '';
 }
 
 async function deleteHistoryItem(idx) {
@@ -585,7 +543,7 @@ async function deleteHistoryItem(idx) {
     if (state.selected >= 0) {
       selectHistory(0);
     } else {
-      showEmptyState();
+      showPlaceholder('empty');
     }
   } else if (state.selected > idx) {
     state.selected--;
@@ -602,9 +560,9 @@ const escapeHtml = s => { const d = document.createElement('div'); d.textContent
 // ==========================================================================
 
 function formatSize(length) {
-  if (length > 1000000) return `${(length / 1000000).toFixed(1)}M chars`;
-  if (length > 1000) return `${(length / 1000).toFixed(1)}K chars`;
-  return `${length} chars`;
+  if (length > 1000000) return `${(length / 1000000).toFixed(1)}M`;
+  if (length > 1000) return `${(length / 1000).toFixed(1)}K`;
+  return `${length}`;
 }
 
 function showMaximizer(content, label) {
@@ -616,7 +574,7 @@ function showMaximizer(content, label) {
       <div class="maximizer-header">
         <span class="maximizer-header-icon">◈</span>
         <span class="maximizer-header-label">${escapeHtml(label)}</span>
-        <span class="maximizer-header-size">${formatSize(content.length)}</span>
+        <span class="maximizer-header-size">${formatSize(content.length)} chars</span>
         <button class="maximizer-close-btn" title="Close (Esc)">
           ${ICONS.close}
         </button>
@@ -665,23 +623,13 @@ function showMaximizer(content, label) {
   overlay.querySelector('.maximizer-container').focus();
 }
 
-// Attach maximize button handlers after rendering
-function attachMaximizeHandlers(container) {
-  container.querySelectorAll('.content-maximize-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = btn.dataset.maximizeId;
-      const label = btn.dataset.label;
-      const template = document.getElementById(id);
-      if (template) {
-        const content = template.innerHTML;
-        // Decode HTML entities back to original text
-        const decoded = document.createElement('textarea');
-        decoded.innerHTML = content;
-        showMaximizer(decoded.value, label);
-      }
-    });
-  });
+// Handle maximize button click - decode content from template
+function handleMaximize(btn) {
+  const template = document.getElementById(btn.dataset.maximizeId);
+  if (!template) return;
+  const decoded = document.createElement('textarea');
+  decoded.innerHTML = template.innerHTML;
+  showMaximizer(decoded.value, btn.dataset.label);
 }
 
 // ==========================================================================
@@ -709,17 +657,6 @@ async function renderState() {
       ${renderStateBlock('user_preferences', 'User Preferences', userPreferences, 'prefs')}
       ${renderStateBlock('browser_state', 'Browser State', browserState, 'browser')}
     `;
-
-    // Attach expand/collapse handlers
-    container.querySelectorAll('.state-block').forEach(block => {
-      block.querySelector('.state-block-header')?.addEventListener('click', () => {
-        block.classList.toggle('collapsed');
-      });
-    });
-
-    // Attach maximize handlers
-    attachMaximizeHandlers(container);
-
   } catch (e) {
     container.innerHTML = `
       <div class="state-error">
@@ -731,15 +668,10 @@ async function renderState() {
 
 function renderStateBlock(key, label, value, type) {
   const isEmpty = !value || (typeof value === 'string' && value.trim() === '');
-  const displayValue = isEmpty
-    ? '<span class="opacity-40 italic">empty</span>'
-    : typeof value === 'string'
-      ? escapeHtml(value)
-      : escapeHtml(JSON.stringify(value, null, 2));
-
-  const charCount = isEmpty ? 0 : (typeof value === 'string' ? value.length : JSON.stringify(value).length);
-  const showMaximize = charCount > MAXIMIZE_THRESHOLD;
-  const uniqueId = `state-${key}-${Date.now()}`;
+  const rawValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  const displayValue = isEmpty ? '<span class="opacity-40 italic">empty</span>' : escapeHtml(rawValue);
+  const showMaximize = !isEmpty && rawValue.length > MAXIMIZE_THRESHOLD;
+  const id = `state-${key}-${Date.now()}`;
 
   return `
     <div class="state-block state-block-${type}" data-key="${key}">
@@ -748,14 +680,14 @@ function renderStateBlock(key, label, value, type) {
         <span class="state-block-icon state-block-icon-${type}">${type === 'prefs' ? '◉' : '◎'}</span>
         <span class="state-block-label">${escapeHtml(label)}</span>
         <span class="state-block-key font-mono">${escapeHtml(key)}</span>
-        ${charCount > 0 ? `<span class="state-block-size">${formatSize(charCount)}</span>` : ''}
+        ${!isEmpty ? `<span class="state-block-size">${formatSize(rawValue.length)} chars</span>` : ''}
       </div>
       <div class="state-block-content">
         ${showMaximize ? `
-          <button class="content-maximize-btn" data-maximize-id="${uniqueId}" data-label="${escapeHtml(label)}" title="Expand">
+          <button class="content-maximize-btn" data-maximize-id="${id}" data-label="${escapeHtml(label)}" title="Expand">
             ${ICONS.maximize}
           </button>
-          <template id="${uniqueId}">${displayValue}</template>
+          <template id="${id}">${displayValue}</template>
         ` : ''}
         <pre class="state-block-value">${displayValue}</pre>
       </div>

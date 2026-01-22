@@ -1,4 +1,3 @@
-// Vishpr Agent - Side Panel Entry Point
 import { initSettings } from './modules/settings.js';
 import { initUiSettings } from './modules/ui-settings.js';
 import { initChat } from './modules/chat.js';

@@ -4,52 +4,9 @@
  */
 import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
-import { actionsRegistry, resolveStepTemplates, CRITIQUE, USER_CLARIFICATION, PREFERENCE_EXTRACTOR } from './actions/index.js';
+import { actionsRegistry, resolveStepTemplates, CRITIQUE, PREFERENCE_EXTRACTOR } from './actions/index.js';
 import { tracer, getTraceById } from './debug/trace-collector.js';
 import { getActionStatsCounter } from './debug/time-bucket-counter.js';
-
-/**
- * Show clarification UI with loading state immediately
- * Returns promise that resolves when user responds
- */
-async function showClarificationLoading(questions) {
-  if (typeof document !== 'undefined') {
-    const ui = await import('./clarification-ui.js');
-    ui.showClarificationLoading(questions);
-    return ui.getClarificationResponse();
-  }
-
-  // Service worker context - send message to sidepanel
-  return new Promise((resolve) => {
-    const handleResponse = (message) => {
-      if (message.action === 'clarificationResponse') {
-        chrome.runtime.onMessage.removeListener(handleResponse);
-        resolve(message.responses);
-      }
-    };
-    chrome.runtime.onMessage.addListener(handleResponse);
-
-    chrome.runtime.sendMessage({
-      action: 'showClarificationLoading',
-      questions
-    }).catch(() => {
-      chrome.runtime.onMessage.removeListener(handleResponse);
-      resolve(questions.map((_, i) => ({ value: '', timed_out: true, question_index: i })));
-    });
-  });
-}
-
-/**
- * Update clarification UI with generated options
- */
-async function updateClarificationOptions(config) {
-  if (typeof document !== 'undefined') {
-    const { updateClarificationOptions } = await import('./clarification-ui.js');
-    updateClarificationOptions(config);
-  } else {
-    chrome.runtime.sendMessage({ action: 'updateClarificationOptions', config }).catch(() => {});
-  }
-}
 
 const TIMEOUT_MS = 20000;
 
@@ -93,12 +50,6 @@ export async function executeAction(action, params, parent_messages = null, trac
       tracer.endAction(actionUUID, startTime, null, error);
       throw error;
     }
-  }
-
-  // Special handling for USER_CLARIFICATION: show UI immediately with loading state
-  let clarificationResponsePromise = null;
-  if (action.name === USER_CLARIFICATION && params.questions?.length > 0) {
-    clarificationResponsePromise = showClarificationLoading(params.questions);
   }
 
   let context = { ...params, parent_messages };
@@ -151,18 +102,6 @@ export async function executeAction(action, params, parent_messages = null, trac
       getActionStatsCounter().increment(action.name, 'errors').catch(() => {});
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
     }
-  }
-
-  // Check for special user_clarification return type
-  if (lastStepOutput?.type === 'user_clarification' && clarificationResponsePromise) {
-    updateClarificationOptions(lastStepOutput);
-    const responses = await clarificationResponsePromise;
-    lastStepOutput = {
-      ...lastStepOutput,
-      user_responses: responses,
-      clarification_completed: true
-    };
-    context = { ...context, ...lastStepOutput };
   }
 
   const result = {
