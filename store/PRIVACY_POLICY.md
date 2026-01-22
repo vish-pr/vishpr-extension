@@ -74,6 +74,7 @@ The Extension requires these permissions:
 | `activeTab` | Read content from the current page to understand context |
 | `scripting` | Execute actions on web pages (clicking, typing, etc.) |
 | `storage` | Save your settings and API key locally |
+| `webRequest` | Detect page load errors (e.g., certificate errors) to provide clear error messages |
 | `<all_urls>` | Work on any website you choose to automate |
 
 **Window Scope Limitation:** The Extension only tracks tabs within the browser window where it is opened. Tabs in other windows are not visible to or tracked by the Extension.

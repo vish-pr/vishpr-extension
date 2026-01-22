@@ -59,6 +59,9 @@ export const elements = {
   get debugTraceTab() { return lazy('debugTraceTab')(); },
   get debugStatsTab() { return lazy('debugStatsTab')(); },
   get debugStatsRefreshBtn() { return lazy('debugStatsRefreshBtn')(); },
+  get debugStateTab() { return lazy('debugStateTab')(); },
+  get debugStateContent() { return lazy('debugStateContent')(); },
+  get debugStateRefreshBtn() { return lazy('debugStateRefreshBtn')(); },
 
   // Stats (in debug panel)
   get modelStatsContainer() { return lazy('modelStatsContainer')(); },

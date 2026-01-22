@@ -105,6 +105,7 @@ NEVER:
 # Confidence Scoring (0-100)
 
 MUST consider:
+- User preferences from knowledge base (if provided) - this is the strongest signal
 - Explicit preferences stated in conversation
 - Current page content/URL indicating user intent
 - Task goal and what would best achieve it
@@ -116,7 +117,7 @@ SHOULD consider:
 - Domain conventions (e.g., developers prefer JSON, users prefer cheaper options)
 
 Scoring:
-- 80-100: Strong explicit signal (user said "I prefer X")
+- 80-100: Strong explicit signal (user preferences KB or user said "I prefer X")
 - 60-79: Clear implicit signal (context strongly suggests X)
 - 40-59: Moderate signal (some evidence points to X)
 - 20-39: Weak signal (slight preference or common default)
@@ -185,6 +186,11 @@ export const userClarificationAction: Action = {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
       message: `Generate and rank options for each question.
+
+{{#user_preferences}}
+User preferences (use for ranking):
+{{{user_preferences}}}
+{{/user_preferences}}
 
 {{#original_goal}}
 User's goal: {{{original_goal}}}

@@ -6,6 +6,10 @@ import { renderModelStats, renderActionStats } from '../ui-settings.js';
 import { getModelStatsCounter, getActionStatsCounter } from './time-bucket-counter.js';
 import { getChatStatus } from '../chat.js';
 import { getTraces, getTraceById, deleteTrace } from './trace-collector.js';
+import { getBrowserStateBundle } from '../chrome-api.js';
+
+// Storage key for user preferences
+const PREFERENCES_KB_KEY = 'user_preferences_kb';
 
 // SVG icons for consistent rendering
 const ICONS = {
@@ -109,6 +113,9 @@ export async function initDebug() {
   // Stats refresh
   elements.debugStatsRefreshBtn.addEventListener('click', refreshStats);
 
+  // State refresh
+  elements.debugStateRefreshBtn.addEventListener('click', refreshState);
+
   state.tabId = await getCurrentTabId();
   await loadStoredTraces();
 }
@@ -119,9 +126,13 @@ async function switchDebugTab(tabName) {
   });
   elements.debugTraceTab.classList.toggle('hidden', tabName !== 'trace');
   elements.debugStatsTab.classList.toggle('hidden', tabName !== 'stats');
+  elements.debugStateTab.classList.toggle('hidden', tabName !== 'state');
 
   if (tabName === 'stats') {
     await Promise.all([renderModelStats(), renderActionStats()]);
+  }
+  if (tabName === 'state') {
+    await renderState();
   }
 }
 
@@ -671,4 +682,94 @@ function attachMaximizeHandlers(container) {
       }
     });
   });
+}
+
+// ==========================================================================
+// State Tab - Runtime state inspector
+// ==========================================================================
+
+async function renderState() {
+  const container = elements.debugStateContent;
+  container.innerHTML = `
+    <div class="state-loading">
+      <div class="timeline-loading-indicator"></div>
+      <span class="text-xs font-mono opacity-50">Fetching state...</span>
+    </div>
+  `;
+
+  try {
+    const [prefsStorage, browserState] = await Promise.all([
+      chrome.storage.local.get(PREFERENCES_KB_KEY),
+      getBrowserStateBundle()
+    ]);
+
+    const userPreferences = prefsStorage[PREFERENCES_KB_KEY] || '';
+
+    container.innerHTML = `
+      ${renderStateBlock('user_preferences', 'User Preferences', userPreferences, 'prefs')}
+      ${renderStateBlock('browser_state', 'Browser State', browserState, 'browser')}
+    `;
+
+    // Attach expand/collapse handlers
+    container.querySelectorAll('.state-block').forEach(block => {
+      block.querySelector('.state-block-header')?.addEventListener('click', () => {
+        block.classList.toggle('collapsed');
+      });
+    });
+
+    // Attach maximize handlers
+    attachMaximizeHandlers(container);
+
+  } catch (e) {
+    container.innerHTML = `
+      <div class="state-error">
+        <span class="text-error text-xs font-mono">Failed to load state: ${escapeHtml(e.message)}</span>
+      </div>
+    `;
+  }
+}
+
+function renderStateBlock(key, label, value, type) {
+  const isEmpty = !value || (typeof value === 'string' && value.trim() === '');
+  const displayValue = isEmpty
+    ? '<span class="opacity-40 italic">empty</span>'
+    : typeof value === 'string'
+      ? escapeHtml(value)
+      : escapeHtml(JSON.stringify(value, null, 2));
+
+  const charCount = isEmpty ? 0 : (typeof value === 'string' ? value.length : JSON.stringify(value).length);
+  const showMaximize = charCount > MAXIMIZE_THRESHOLD;
+  const uniqueId = `state-${key}-${Date.now()}`;
+
+  return `
+    <div class="state-block state-block-${type}" data-key="${key}">
+      <div class="state-block-header">
+        <span class="state-block-chevron">${ICONS.chevron}</span>
+        <span class="state-block-icon state-block-icon-${type}">${type === 'prefs' ? '◉' : '◎'}</span>
+        <span class="state-block-label">${escapeHtml(label)}</span>
+        <span class="state-block-key font-mono">${escapeHtml(key)}</span>
+        ${charCount > 0 ? `<span class="state-block-size">${formatSize(charCount)}</span>` : ''}
+      </div>
+      <div class="state-block-content">
+        ${showMaximize ? `
+          <button class="content-maximize-btn" data-maximize-id="${uniqueId}" data-label="${escapeHtml(label)}" title="Expand">
+            ${ICONS.maximize}
+          </button>
+          <template id="${uniqueId}">${displayValue}</template>
+        ` : ''}
+        <pre class="state-block-value">${displayValue}</pre>
+      </div>
+    </div>
+  `;
+}
+
+async function refreshState() {
+  elements.debugStateRefreshBtn.disabled = true;
+  elements.debugStateRefreshBtn.classList.add('loading', 'loading-spinner');
+  try {
+    await renderState();
+  } finally {
+    elements.debugStateRefreshBtn.disabled = false;
+    elements.debugStateRefreshBtn.classList.remove('loading', 'loading-spinner');
+  }
 }

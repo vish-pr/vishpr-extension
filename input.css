@@ -945,3 +945,129 @@ body { @apply flex flex-col; }
   @apply relative;
 }
 
+/* ==========================================================================
+   State Tab - Runtime State Inspector
+   ========================================================================== */
+
+.state-loading {
+  @apply flex flex-col items-center justify-center gap-3 py-12;
+}
+
+.state-error {
+  @apply p-4 rounded-lg text-center;
+  background: oklch(var(--er) / 0.1);
+  border: 1px solid oklch(var(--er) / 0.2);
+}
+
+/* State blocks - terminal-inspired cards */
+.state-block {
+  @apply rounded-lg overflow-hidden;
+  border: 1px solid oklch(var(--bc) / 0.12);
+  background: oklch(var(--b1));
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.06);
+}
+
+.state-block-header {
+  @apply flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none;
+  background: linear-gradient(180deg, oklch(var(--b2)) 0%, oklch(var(--b2) / 0.8) 100%);
+  border-bottom: 1px solid oklch(var(--bc) / 0.08);
+  transition: background 0.15s ease;
+}
+
+.state-block-header:hover {
+  background: linear-gradient(180deg, oklch(var(--b3)) 0%, oklch(var(--b2)) 100%);
+}
+
+.state-block-chevron {
+  @apply transition-transform duration-200;
+  color: oklch(var(--bc) / 0.4);
+}
+
+.state-block.collapsed .state-block-chevron {
+  transform: rotate(0deg);
+}
+
+.state-block:not(.collapsed) .state-block-chevron {
+  transform: rotate(90deg);
+}
+
+.state-block-icon {
+  @apply text-sm font-bold;
+}
+
+.state-block-icon-prefs {
+  color: oklch(0.7 0.15 280);
+}
+
+.state-block-icon-browser {
+  color: oklch(0.65 0.18 200);
+}
+
+.state-block-label {
+  @apply text-xs font-semibold uppercase tracking-wide;
+  color: oklch(var(--bc) / 0.7);
+}
+
+.state-block-key {
+  @apply text-[10px] px-1.5 py-0.5 rounded;
+  background: oklch(var(--bc) / 0.08);
+  color: oklch(var(--bc) / 0.5);
+}
+
+.state-block-size {
+  @apply text-[10px] font-mono ml-auto;
+  color: oklch(var(--bc) / 0.4);
+}
+
+.state-block-content {
+  @apply relative p-3;
+  background: oklch(var(--b1));
+}
+
+.state-block.collapsed .state-block-content {
+  @apply hidden;
+}
+
+.state-block-value {
+  @apply text-xs leading-relaxed whitespace-pre-wrap break-words m-0 p-0;
+  font-family: var(--font-mono);
+  color: oklch(var(--bc) / 0.85);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.state-block-value::-webkit-scrollbar {
+  width: 6px;
+}
+
+.state-block-value::-webkit-scrollbar-track {
+  background: oklch(var(--bc) / 0.05);
+  border-radius: 3px;
+}
+
+.state-block-value::-webkit-scrollbar-thumb {
+  background: oklch(var(--bc) / 0.15);
+  border-radius: 3px;
+}
+
+.state-block-value::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--bc) / 0.25);
+}
+
+/* Block type accents */
+.state-block-prefs {
+  border-left: 3px solid oklch(0.7 0.15 280);
+}
+
+.state-block-prefs .state-block-header {
+  background: linear-gradient(90deg, oklch(var(--b2)) 0%, oklch(0.7 0.15 280 / 0.08) 100%);
+}
+
+.state-block-browser {
+  border-left: 3px solid oklch(0.65 0.18 200);
+}
+
+.state-block-browser .state-block-header {
+  background: linear-gradient(90deg, oklch(var(--b2)) 0%, oklch(0.65 0.18 200 / 0.08) 100%);
+}
+

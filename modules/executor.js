@@ -193,6 +193,12 @@ export async function executeAction(action, params, parent_messages = null, trac
 // Storage key for user preferences knowledge base
 const PREFERENCES_KB_KEY = 'user_preferences_kb';
 
+// Get user preferences from storage (global context for all actions)
+async function getUserPreferences() {
+  const storage = await chrome.storage.local.get(PREFERENCES_KB_KEY);
+  return storage[PREFERENCES_KB_KEY] || '';
+}
+
 // Fire-and-forget critique runner
 async function runCritiqueAsync(parentUUID) {
   try {
@@ -287,7 +293,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) 
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
   });
-  context = { ...context, browser_state: await getBrowserStateBundle(), current_datetime, stop_action: tool_choice?.stop_action };
+  context = { ...context, browser_state: await getBrowserStateBundle(), user_preferences: await getUserPreferences(), current_datetime, stop_action: tool_choice?.stop_action };
 
   if (skip_if) {
     const skipped = skip_if(context);
