@@ -273,6 +273,62 @@ body { @apply flex flex-col; }
   background: oklch(var(--b3));
 }
 
+/* LLM Reasoning field styling */
+.llm-reasoning {
+  @apply whitespace-pre-wrap break-words p-3 rounded overflow-auto max-h-64;
+  background: oklch(var(--b3));
+  border-left: 3px solid oklch(var(--p));
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* Tool calls - compact inline style */
+.tool-calls-container {
+  @apply flex flex-col gap-1;
+}
+
+.tool-call-inline {
+  @apply rounded;
+  border: 1px solid oklch(var(--bc) / 0.1);
+}
+
+.tool-call-summary {
+  @apply flex items-center gap-1 px-2 py-1.5 text-xs cursor-pointer;
+  background: oklch(var(--b3));
+  &:hover { background: oklch(var(--bc) / 0.08); }
+}
+
+.tool-call-chevron {
+  @apply text-[10px] opacity-50 transition-transform duration-150;
+}
+
+.tool-call-inline[data-expanded="true"] .tool-call-chevron {
+  transform: rotate(90deg);
+}
+
+.tool-call-name {
+  @apply font-mono font-semibold text-xs;
+  color: oklch(var(--s));
+}
+
+.tool-call-params {
+  @apply font-mono text-xs opacity-60;
+}
+
+.tool-call-id {
+  @apply ml-auto text-[10px] opacity-40 font-mono;
+}
+
+.tool-call-args {
+  @apply hidden whitespace-pre-wrap break-words p-2 m-0 text-xs overflow-auto max-h-48;
+  background: oklch(var(--b2));
+  border-top: 1px solid oklch(var(--bc) / 0.1);
+}
+
+.tool-call-inline[data-expanded="true"] .tool-call-args {
+  @apply block;
+}
+
 .trace-children { @apply hidden pl-4; }
 
 /* Collapsible large data blocks */
@@ -716,5 +772,176 @@ body { @apply flex flex-col; }
 /* Paused indicator */
 .clarification-paused {
   @apply absolute -top-3 left-1/2 -translate-x-1/2 z-10;
+}
+
+/* ==========================================================================
+   Content Maximizer - Full-Screen Data Viewer
+   ========================================================================== */
+
+/* Maximize button - appears on large content blocks */
+.content-maximize-btn {
+  @apply absolute top-1.5 right-1.5 w-6 h-6 rounded flex items-center justify-center;
+  @apply opacity-0 transition-all duration-150 cursor-pointer z-10;
+  background: oklch(var(--b3));
+  border: 1px solid oklch(var(--bc) / 0.15);
+  color: oklch(var(--bc) / 0.5);
+  &:hover {
+    background: oklch(var(--bc) / 0.15);
+    color: oklch(var(--bc) / 0.9);
+    transform: scale(1.1);
+  }
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+.trace-detail-value:hover .content-maximize-btn,
+.tool-call-inline:hover .content-maximize-btn {
+  @apply opacity-100;
+}
+
+/* Maximizer overlay backdrop */
+.maximizer-overlay {
+  @apply fixed inset-0 z-[9999] flex items-center justify-center p-4;
+  background: oklch(0 0 0 / 0.85);
+  backdrop-filter: blur(8px);
+  animation: maximizerFadeIn 0.2s ease-out;
+}
+
+@keyframes maximizerFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(8px);
+  }
+}
+
+.maximizer-overlay.closing {
+  animation: maximizerFadeOut 0.15s ease-in forwards;
+}
+
+@keyframes maximizerFadeOut {
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+}
+
+/* Maximizer container */
+.maximizer-container {
+  @apply relative flex flex-col w-full h-full max-w-5xl max-h-[90vh] rounded-lg overflow-hidden;
+  background: oklch(var(--b1));
+  border: 1px solid oklch(var(--bc) / 0.15);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 0.3),
+    0 25px 80px -15px oklch(0 0 0 / 0.5),
+    0 0 60px oklch(var(--p) / 0.08);
+  animation: maximizerSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes maximizerSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.maximizer-overlay.closing .maximizer-container {
+  animation: maximizerSlideDown 0.15s ease-in forwards;
+}
+
+@keyframes maximizerSlideDown {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}
+
+/* Maximizer header - terminal style */
+.maximizer-header {
+  @apply flex items-center gap-3 px-4 py-3 shrink-0;
+  background: linear-gradient(90deg, oklch(var(--b2)) 0%, oklch(var(--b3)) 100%);
+  border-bottom: 1px solid oklch(var(--bc) / 0.1);
+}
+
+.maximizer-header-icon {
+  @apply text-base;
+  color: oklch(var(--p));
+}
+
+.maximizer-header-label {
+  @apply text-[10px] font-bold uppercase tracking-[0.2em] flex-1;
+  color: oklch(var(--bc) / 0.4);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.maximizer-header-size {
+  @apply text-xs font-mono px-2 py-0.5 rounded;
+  background: oklch(var(--bc) / 0.08);
+  color: oklch(var(--bc) / 0.5);
+}
+
+.maximizer-close-btn {
+  @apply w-8 h-8 rounded flex items-center justify-center cursor-pointer transition-all;
+  background: oklch(var(--bc) / 0.05);
+  color: oklch(var(--bc) / 0.5);
+  &:hover {
+    background: oklch(0.55 0.2 25 / 0.15);
+    color: oklch(0.65 0.2 25);
+  }
+}
+
+/* Maximizer content area */
+.maximizer-content {
+  @apply flex-1 overflow-auto p-4;
+  background: oklch(var(--b1));
+}
+
+.maximizer-content pre {
+  @apply whitespace-pre-wrap break-words m-0 leading-relaxed;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: oklch(var(--bc) / 0.85);
+  tab-size: 2;
+}
+
+/* Subtle scan lines for terminal feel */
+.maximizer-content::before {
+  content: '';
+  @apply absolute inset-0 pointer-events-none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 2px,
+    oklch(0 0 0 / 0.02) 2px,
+    oklch(0 0 0 / 0.02) 4px
+  );
+}
+
+/* Footer with keyboard hint */
+.maximizer-footer {
+  @apply flex items-center justify-center gap-4 px-4 py-2 text-xs shrink-0;
+  background: oklch(var(--b2));
+  border-top: 1px solid oklch(var(--bc) / 0.1);
+  color: oklch(var(--bc) / 0.4);
+}
+
+.maximizer-footer kbd {
+  @apply px-1.5 py-0.5 rounded font-mono text-[10px];
+  background: oklch(var(--bc) / 0.1);
+  border: 1px solid oklch(var(--bc) / 0.15);
+  color: oklch(var(--bc) / 0.6);
+}
+
+/* Position relative for maximize button */
+.trace-detail-value {
+  @apply relative;
 }
 

@@ -4,7 +4,6 @@ import { initUiSettings } from './modules/ui-settings.js';
 import { initChat } from './modules/chat.js';
 import { initDebug } from './modules/debug/index.js';
 import {
-  showClarification,
   showClarificationLoading,
   updateClarificationOptions,
   getClarificationResponse
@@ -12,19 +11,12 @@ import {
 
 // Listen for clarification requests from background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'showClarification') {
-    showClarification(message.config).then(responses => {
-      chrome.runtime.sendMessage({ action: 'clarificationResponse', responses });
-    });
-    return true;
-  }
-
   if (message.action === 'showClarificationLoading') {
     showClarificationLoading(message.questions);
     getClarificationResponse().then(responses => {
       chrome.runtime.sendMessage({ action: 'clarificationResponse', responses });
     });
-    return true;
+    return false; // Don't keep channel open - we send separate message for response
   }
 
   if (message.action === 'updateClarificationOptions') {

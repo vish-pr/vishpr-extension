@@ -13,7 +13,12 @@ const ICONS = {
   check: '<svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>',
   x: '<svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>',
   dot: '<svg class="size-2.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>',
+  maximize: '<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>',
+  close: '<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
 };
+
+// Content length threshold for showing maximize button
+const MAXIMIZE_THRESHOLD = 5000;
 
 // Format object as key: value pairs instead of JSON
 function formatKeyValue(obj) {
@@ -21,6 +26,60 @@ function formatKeyValue(obj) {
   return Object.entries(obj)
     .map(([k, v]) => `${k}: ${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
     .join('\n');
+}
+
+// Format LLM response with separate sections for reasoning, tool_calls, content, and remaining fields
+function formatLLMResponse(outputData) {
+  if (!outputData || typeof outputData !== 'object') {
+    return { reasoning: null, toolCalls: null, content: null, remaining: outputData };
+  }
+
+  const specialFields = ['reasoning', 'tool_calls', 'usage', 'model', 'content'];
+  const reasoning = outputData.reasoning || null;
+  const toolCalls = outputData.tool_calls || null;
+  const content = outputData.content || null;
+
+  // Collect remaining fields (exclude special ones)
+  const remainingEntries = Object.entries(outputData).filter(([k]) => !specialFields.includes(k));
+  const remaining = remainingEntries.length > 0 ? Object.fromEntries(remainingEntries) : null;
+
+  return { reasoning, toolCalls, content, remaining };
+}
+
+// Render tool calls as compact inline items with expandable args
+function renderToolCalls(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+
+  return toolCalls.map((call, i) => {
+    const fn = call.function || {};
+    const name = fn.name || 'unknown';
+    let argsRaw = fn.arguments || '';
+    let paramNames = [];
+    let formattedArgs = argsRaw;
+
+    // Try to parse arguments and extract param names
+    try {
+      const parsed = typeof argsRaw === 'string' ? JSON.parse(argsRaw) : argsRaw;
+      if (parsed && typeof parsed === 'object') {
+        paramNames = Object.keys(parsed);
+        formattedArgs = formatKeyValue(parsed);
+      }
+    } catch {
+      // Keep as-is if not valid JSON
+    }
+
+    const signature = paramNames.length > 0 ? `(${paramNames.join(', ')})` : '()';
+    const uniqueId = `tool-call-${i}-${Date.now()}`;
+
+    return `<div class="tool-call-inline" data-expanded="false" data-target="${uniqueId}">
+      <div class="tool-call-summary">
+        <span class="tool-call-chevron">${ICONS.chevron}</span>
+        <span class="tool-call-name">${escapeHtml(name)}</span><span class="tool-call-params">${escapeHtml(signature)}</span>
+        ${call.id ? `<span class="tool-call-id">${escapeHtml(call.id)}</span>` : ''}
+      </div>
+      <pre class="tool-call-args" id="${uniqueId}">${escapeHtml(formattedArgs)}</pre>
+    </div>`;
+  }).join('');
 }
 
 // Find CRITIQUE child action result from trace tree
@@ -154,6 +213,17 @@ function renderTimeline(run) {
     });
   });
 
+  // Attach expand/collapse handlers for tool calls
+  elements.debugTimeline.querySelectorAll('.tool-call-inline').forEach(el => {
+    el.querySelector('.tool-call-summary')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isExpanded = el.dataset.expanded === 'true';
+      el.dataset.expanded = isExpanded ? 'false' : 'true';
+    });
+  });
+
+  // Attach maximize button handlers for large content
+  attachMaximizeHandlers(elements.debugTimeline);
 }
 
 function renderNode(node, depth = 0) {
@@ -181,16 +251,46 @@ function renderNode(node, depth = 0) {
     const tokensStr = `${tokens.input} in / ${tokens.output} out`;
     details.push(detailRow('MODEL', `${node.model || 'unknown'} · ${tokensStr} · ${costStr}`));
   }
-  if (node.input) details.push(detailRow('INPUT', `<pre>${escapeHtml(formatKeyValue(node.input))}</pre>`));
-  if (node.prompt) details.push(detailRow('PROMPT', `<pre>${escapeHtml(node.prompt)}</pre>`));
+  if (node.input) {
+    const inputStr = formatKeyValue(node.input);
+    details.push(detailRow('INPUT', formatLargeContent(inputStr, 'INPUT')));
+  }
+  if (node.prompt) {
+    details.push(detailRow('PROMPT', formatLargeContent(node.prompt, 'PROMPT')));
+  }
   if (node.output && node.status !== 'skipped') {
     const outputData = node.output?.result ?? node.output;
-    // Filter out usage field
-    const filtered = typeof outputData === 'object' && outputData !== null
-      ? Object.fromEntries(Object.entries(outputData).filter(([k]) => k !== 'usage'))
-      : outputData;
-    const label = node.type === 'llm' ? 'RESPONSE' : 'RESULT';
-    details.push(detailRow(label, `<pre>${escapeHtml(typeof filtered === 'string' ? filtered : formatKeyValue(filtered))}</pre>`));
+
+    if (node.type === 'llm' && typeof outputData === 'object' && outputData !== null) {
+      // Format LLM response with separate sections
+      const { reasoning, toolCalls, content, remaining } = formatLLMResponse(outputData);
+
+      if (reasoning) {
+        if (reasoning.length > MAXIMIZE_THRESHOLD) {
+          details.push(detailRow('REASONING', formatLargeContent(reasoning, 'REASONING')));
+        } else {
+          details.push(detailRow('REASONING', `<pre class="llm-reasoning">${escapeHtml(reasoning)}</pre>`));
+        }
+      }
+      if (toolCalls && toolCalls.length > 0) {
+        details.push(detailRow('TOOL_CALLS', `<div class="tool-calls-container">${renderToolCalls(toolCalls)}</div>`));
+      }
+      if (content) {
+        details.push(detailRow('CONTENT', formatLargeContent(content, 'CONTENT')));
+      }
+      if (remaining && Object.keys(remaining).length > 0) {
+        const remainingStr = formatKeyValue(remaining);
+        details.push(detailRow('RESPONSE', formatLargeContent(remainingStr, 'RESPONSE')));
+      }
+    } else {
+      // Non-LLM nodes: filter out usage and display as before
+      const filtered = typeof outputData === 'object' && outputData !== null
+        ? Object.fromEntries(Object.entries(outputData).filter(([k]) => k !== 'usage'))
+        : outputData;
+      const label = node.type === 'llm' ? 'RESPONSE' : 'RESULT';
+      const filteredStr = typeof filtered === 'string' ? filtered : formatKeyValue(filtered);
+      details.push(detailRow(label, formatLargeContent(filteredStr, label)));
+    }
   }
   if (node.context) details.push(detailRow('CONTEXT', `<pre>${escapeHtml(JSON.stringify(node.context, null, 2))}</pre>`));
   if (node.error) {
@@ -218,6 +318,30 @@ function renderNode(node, depth = 0) {
       ${hasChildren ? `<div class="trace-children">${node.children.map(c => renderNode(c, depth + 1)).join('')}</div>` : ''}
     </div>
   `;
+}
+
+// Format content with maximize button if it exceeds threshold
+function formatLargeContent(content, label) {
+  const contentLength = content.length;
+  if (contentLength <= MAXIMIZE_THRESHOLD) {
+    return `<pre>${escapeHtml(content)}</pre>`;
+  }
+
+  const sizeLabel = contentLength > 1000000
+    ? `${(contentLength / 1000000).toFixed(1)}M`
+    : contentLength > 1000
+    ? `${(contentLength / 1000).toFixed(1)}K`
+    : `${contentLength}`;
+
+  const uniqueId = `max-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  return `<div class="relative">
+    <button class="content-maximize-btn" data-maximize-id="${uniqueId}" data-label="${escapeHtml(label)}" title="Expand (${sizeLabel} chars)">
+      ${ICONS.maximize}
+    </button>
+    <pre>${escapeHtml(content)}</pre>
+    <template id="${uniqueId}">${escapeHtml(content)}</template>
+  </div>`;
 }
 
 function detailRow(label, value) {
@@ -461,3 +585,90 @@ async function deleteHistoryItem(idx) {
 const formatDuration = ms => ms < 1000 ? `${Math.round(ms)}ms` : `${(ms/1000).toFixed(1)}s`;
 const formatTime = d => d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
 const escapeHtml = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+
+// ==========================================================================
+// Content Maximizer - Full-screen overlay for large content
+// ==========================================================================
+
+function formatSize(length) {
+  if (length > 1000000) return `${(length / 1000000).toFixed(1)}M chars`;
+  if (length > 1000) return `${(length / 1000).toFixed(1)}K chars`;
+  return `${length} chars`;
+}
+
+function showMaximizer(content, label) {
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'maximizer-overlay';
+  overlay.innerHTML = `
+    <div class="maximizer-container">
+      <div class="maximizer-header">
+        <span class="maximizer-header-icon">◈</span>
+        <span class="maximizer-header-label">${escapeHtml(label)}</span>
+        <span class="maximizer-header-size">${formatSize(content.length)}</span>
+        <button class="maximizer-close-btn" title="Close (Esc)">
+          ${ICONS.close}
+        </button>
+      </div>
+      <div class="maximizer-content">
+        <pre></pre>
+      </div>
+      <div class="maximizer-footer">
+        <span>Press <kbd>Esc</kbd> to close</span>
+      </div>
+    </div>
+  `;
+
+  // Set content via textContent to avoid XSS
+  overlay.querySelector('.maximizer-content pre').textContent = content;
+
+  // Close handlers
+  const close = () => {
+    overlay.classList.add('closing');
+    setTimeout(() => overlay.remove(), 150);
+    document.removeEventListener('keydown', handleKeydown);
+  };
+
+  const handleKeydown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
+  };
+
+  // Click outside to close
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  // Close button
+  overlay.querySelector('.maximizer-close-btn').addEventListener('click', close);
+
+  // Keyboard support
+  document.addEventListener('keydown', handleKeydown);
+
+  // Add to DOM
+  document.body.appendChild(overlay);
+
+  // Focus the container for keyboard events
+  overlay.querySelector('.maximizer-container').focus();
+}
+
+// Attach maximize button handlers after rendering
+function attachMaximizeHandlers(container) {
+  container.querySelectorAll('.content-maximize-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.maximizeId;
+      const label = btn.dataset.label;
+      const template = document.getElementById(id);
+      if (template) {
+        const content = template.innerHTML;
+        // Decode HTML entities back to original text
+        const decoded = document.createElement('textarea');
+        decoded.innerHTML = content;
+        showMaximizer(decoded.value, label);
+      }
+    });
+  });
+}

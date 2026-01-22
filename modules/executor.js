@@ -4,7 +4,7 @@
  */
 import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
-import { actionsRegistry, resolveStepTemplates, CRITIQUE, USER_CLARIFICATION } from './actions/index.js';
+import { actionsRegistry, resolveStepTemplates, CRITIQUE, USER_CLARIFICATION, PREFERENCE_EXTRACTOR } from './actions/index.js';
 import { tracer, getTraceById } from './debug/trace-collector.js';
 import { getActionStatsCounter } from './debug/time-bucket-counter.js';
 
@@ -49,44 +49,6 @@ async function updateClarificationOptions(config) {
   } else {
     chrome.runtime.sendMessage({ action: 'updateClarificationOptions', config }).catch(() => {});
   }
-}
-
-/**
- * Request clarification UI - sends message to sidepanel if in service worker context
- */
-async function requestClarification(config) {
-  // Check if we're in a context with DOM (sidepanel)
-  if (typeof document !== 'undefined') {
-    const { showClarification } = await import('./clarification-ui.js');
-    return showClarification(config);
-  }
-
-  // Service worker context - send message to sidepanel
-  return new Promise((resolve) => {
-    const handleResponse = (message) => {
-      if (message.action === 'clarificationResponse') {
-        chrome.runtime.onMessage.removeListener(handleResponse);
-        resolve(message.responses);
-      }
-    };
-    chrome.runtime.onMessage.addListener(handleResponse);
-
-    // Send to sidepanel
-    chrome.runtime.sendMessage({
-      action: 'showClarification',
-      config
-    }).catch(() => {
-      // If no sidepanel listening, return defaults
-      chrome.runtime.onMessage.removeListener(handleResponse);
-      resolve(
-        (config.default_answers || []).map((value, i) => ({
-          value,
-          timed_out: true,
-          question_index: i
-        }))
-      );
-    });
-  });
 }
 
 const TIMEOUT_MS = 20000;
@@ -192,38 +154,15 @@ export async function executeAction(action, params, parent_messages = null, trac
   }
 
   // Check for special user_clarification return type
-  if (lastStepOutput?.type === 'user_clarification') {
-    try {
-      let responses;
-      if (clarificationResponsePromise) {
-        // UI was already shown with loading state - update it with options
-        updateClarificationOptions(lastStepOutput);
-        responses = await clarificationResponsePromise;
-      } else {
-        // Fallback: show UI normally (shouldn't happen for USER_CLARIFICATION action)
-        responses = await requestClarification(lastStepOutput);
-      }
-      // Inject user response back into result
-      lastStepOutput = {
-        ...lastStepOutput,
-        user_responses: responses,
-        clarification_completed: true
-      };
-      context = { ...context, ...lastStepOutput };
-    } catch (err) {
-      console.error('Clarification UI error:', err);
-      // Continue with default answers on error
-      lastStepOutput = {
-        ...lastStepOutput,
-        user_responses: lastStepOutput.default_answers?.map((value, i) => ({
-          value,
-          timed_out: true,
-          question_index: i
-        })) || [],
-        clarification_completed: true,
-        clarification_error: err.message
-      };
-    }
+  if (lastStepOutput?.type === 'user_clarification' && clarificationResponsePromise) {
+    updateClarificationOptions(lastStepOutput);
+    const responses = await clarificationResponsePromise;
+    lastStepOutput = {
+      ...lastStepOutput,
+      user_responses: responses,
+      clarification_completed: true
+    };
+    context = { ...context, ...lastStepOutput };
   }
 
   const result = {
@@ -238,15 +177,21 @@ export async function executeAction(action, params, parent_messages = null, trac
 
   // Only return trace info for root action (no parent)
   if (!traceUUID) {
-    // Fire-and-forget critique for root actions (except CRITIQUE itself)
-    if (action.name !== CRITIQUE) {
+    // Fire-and-forget post-processing for root actions
+    const skipActions = [CRITIQUE, PREFERENCE_EXTRACTOR];
+    if (!skipActions.includes(action.name)) {
+      // Run critique and preference extraction in parallel
       runCritiqueAsync(actionUUID);
+      runPreferenceExtractorAsync(actionUUID);
     }
     return { ...result, _traceUUID: actionUUID, _duration: endEvent.duration };
   }
 
   return result;
 }
+
+// Storage key for user preferences knowledge base
+const PREFERENCES_KB_KEY = 'user_preferences_kb';
 
 // Fire-and-forget critique runner
 async function runCritiqueAsync(parentUUID) {
@@ -258,6 +203,82 @@ async function runCritiqueAsync(parentUUID) {
   } catch (e) {
     console.error('Critique failed:', e.message);
   }
+}
+
+// Fire-and-forget preference extractor runner
+async function runPreferenceExtractorAsync(parentUUID) {
+  try {
+    const trace = await getTraceById(parentUUID);
+    if (!trace?.trace) return;
+
+    // Extract conversation from trace - look for parent_messages in step inputs
+    const conversation = extractConversationFromTrace(trace.trace);
+    if (!conversation || conversation.length === 0) return;
+
+    // Load existing knowledge base
+    const storage = await chrome.storage.local.get(PREFERENCES_KB_KEY);
+    const existingKB = storage[PREFERENCES_KB_KEY] || '';
+
+    // Run preference extractor
+    const extractorUUID = `${parentUUID}_preferences_${crypto.randomUUID()}`;
+    const result = await executeAction(
+      actionsRegistry[PREFERENCE_EXTRACTOR],
+      { conversation, existing_knowledge_base: existingKB },
+      null,
+      extractorUUID
+    );
+
+    // Save updated knowledge base if changed
+    if (result?.result?.knowledge_updated && result?.result?.updated_knowledge_base) {
+      await chrome.storage.local.set({ [PREFERENCES_KB_KEY]: result.result.updated_knowledge_base });
+    }
+  } catch (e) {
+    console.error('Preference extraction failed:', e.message);
+  }
+}
+
+// Extract conversation messages from trace tree
+function extractConversationFromTrace(trace) {
+  const messages = [];
+  const seen = new Set();
+
+  function collect(node) {
+    // Look for parent_messages in step inputs
+    if (node.input?.parent_messages && Array.isArray(node.input.parent_messages)) {
+      for (const msg of node.input.parent_messages) {
+        // Deduplicate by content hash
+        const key = `${msg.role}:${msg.content?.slice(0, 100)}`;
+        if (!seen.has(key) && msg.content) {
+          seen.add(key);
+          messages.push({ role: msg.role, content: msg.content });
+        }
+      }
+    }
+
+    // Look for LLM prompts and outputs as conversation
+    if (node.type === 'llm' && node.prompt) {
+      // Extract user messages from prompt
+      const userMatch = node.prompt.match(/\[USER\]: ([\s\S]*?)(?=\[(?:ASSISTANT|SYSTEM|USER)\]:|$)/gi);
+      if (userMatch) {
+        for (const match of userMatch) {
+          const content = match.replace(/^\[USER\]: /i, '').trim();
+          const key = `user:${content.slice(0, 100)}`;
+          if (!seen.has(key) && content) {
+            seen.add(key);
+            messages.push({ role: 'user', content });
+          }
+        }
+      }
+    }
+
+    // Recurse into children
+    for (const child of node.children || []) {
+      collect(child);
+    }
+  }
+
+  collect(trace);
+  return messages;
 }
 
 async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) {

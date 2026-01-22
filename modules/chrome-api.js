@@ -29,11 +29,13 @@ async function getTabUrl(tabId, fallback = 'unknown') {
 class ChromeAPI {
   constructor() {
     this.tabs = new Map();
+    this.tabErrors = new Map(); // Store network errors per tab
     this.currentTabId = null;
     this.currentTabUrl = null;
     this.windowId = null;
     this._readyPromise = null;
     this._initTabListeners();
+    this._initErrorListener();
   }
 
   setWindowId(windowId) {
@@ -136,6 +138,47 @@ class ChromeAPI {
     });
 
     this._initCurrentTab();
+  }
+
+  _initErrorListener() {
+    // Capture network errors (certificate errors, DNS failures, etc.) per tab
+    chrome.webRequest.onErrorOccurred.addListener(
+      (details) => {
+        // Only track main frame errors (not subresources)
+        if (details.type === 'main_frame' && details.tabId > 0) {
+          this.tabErrors.set(details.tabId, {
+            error: details.error,
+            url: details.url,
+            timestamp: Date.now()
+          });
+        }
+      },
+      { urls: ['<all_urls>'] }
+    );
+
+    // Clear error when tab navigates successfully
+    chrome.webRequest.onCompleted.addListener(
+      (details) => {
+        if (details.type === 'main_frame' && details.tabId > 0) {
+          this.tabErrors.delete(details.tabId);
+        }
+      },
+      { urls: ['<all_urls>'] }
+    );
+
+    // Clean up errors when tab is closed
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      this.tabErrors.delete(tabId);
+    });
+  }
+
+  getTabError(tabId) {
+    const error = this.tabErrors.get(tabId);
+    // Only return if error is recent (within 30 seconds)
+    if (error && Date.now() - error.timestamp < 30000) {
+      return error.error;
+    }
+    return null;
   }
 
   _initCurrentTab() {
@@ -256,6 +299,44 @@ class ChromeAPI {
 
   // --- Browser Operations ---
 
+  // Check if URL is a restricted internal page where content scripts cannot run
+  // Returns error message string if restricted, null otherwise
+  _isRestrictedUrl(url) {
+    if (!url) return 'Cannot access page - URL is not available';
+
+    const restrictedPatterns = [
+      { pattern: /^chrome:\/\//i, message: 'Cannot access chrome:// internal pages' },
+      { pattern: /^chrome-extension:\/\//i, message: 'Cannot access extension pages' },
+      { pattern: /^edge:\/\//i, message: 'Cannot access edge:// internal pages' },
+      { pattern: /^about:/i, message: 'Cannot access about: pages' },
+      { pattern: /^view-source:/i, message: 'Cannot access view-source: pages' },
+      { pattern: /^devtools:\/\//i, message: 'Cannot access DevTools pages' },
+      { pattern: /^https?:\/\/chrome\.google\.com\/webstore/i, message: 'Cannot access Chrome Web Store pages' },
+      { pattern: /^https?:\/\/chromewebstore\.google\.com/i, message: 'Cannot access Chrome Web Store pages' },
+      { pattern: /^https?:\/\/microsoftedge\.microsoft\.com\/addons/i, message: 'Cannot access Edge Add-ons Store pages' },
+    ];
+
+    for (const { pattern, message } of restrictedPatterns) {
+      if (pattern.test(url)) return message;
+    }
+    return null;
+  }
+
+  // Check if error indicates a browser error page (certificate errors, DNS failures, etc.)
+  _isErrorPageError(errorMessage) {
+    const errorPagePatterns = [
+      /error page/i,
+      /showing error/i,
+      /ERR_CERT/i,
+      /ERR_SSL/i,
+      /ERR_CONNECTION/i,
+      /ERR_NAME_NOT_RESOLVED/i,
+      /ERR_INTERNET_DISCONNECTED/i,
+      /ERR_NETWORK/i,
+    ];
+    return errorPagePatterns.some(pattern => pattern.test(errorMessage));
+  }
+
   async _executeContentScript(tabId, action, params = {}) {
     try {
       await chrome.tabs.get(tabId);
@@ -263,13 +344,42 @@ class ChromeAPI {
 
     const urlBefore = await getTabUrl(tabId);
 
+    // Check for restricted URLs first
+    const restrictionMessage = this._isRestrictedUrl(urlBefore);
+    if (restrictionMessage) {
+      throw new Error(restrictionMessage);
+    }
+
     let result;
     try {
       result = await chrome.tabs.sendMessage(tabId, { action, ...params });
     } catch (error) {
+      // Check for browser error page (certificate errors, connection failures, etc.)
+      if (this._isErrorPageError(error.message)) {
+        const networkError = this.getTabError(tabId);
+        const errorDetail = networkError || error.message;
+        const err = new Error(`Cannot read page: ${errorDetail}`);
+        err.code = 'BROWSER_ERROR_PAGE';
+        err.url = urlBefore;
+        throw err;
+      }
+
       if (error.message.includes('Could not establish connection') || error.message.includes('Receiving end does not exist')) {
-        await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-        result = await chrome.tabs.sendMessage(tabId, { action, ...params });
+        try {
+          await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+          result = await chrome.tabs.sendMessage(tabId, { action, ...params });
+        } catch (retryError) {
+          // Check again for error page after retry
+          if (this._isErrorPageError(retryError.message)) {
+            const networkError = this.getTabError(tabId);
+            const errorDetail = networkError || retryError.message;
+            const err = new Error(`Cannot read page: ${errorDetail}`);
+            err.code = 'BROWSER_ERROR_PAGE';
+            err.url = urlBefore;
+            throw err;
+          }
+          throw retryError;
+        }
       } else {
         throw error;
       }

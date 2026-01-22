@@ -93,14 +93,13 @@ export async function getTraceById(traceId) {
     const suffix = childMeta.traceId.slice(traceId.length + 1);
     const firstPart = suffix.split('_')[0];
 
-    if (firstPart === 'critique') {
-      // Attach critique directly to root action
-      trace.children.push(childResult.trace);
+    const stepIndex = parseInt(firstPart, 10);
+    const step = !isNaN(stepIndex) && trace.children.find(s => s.id === `${stepIndex}`);
+    if (step) {
+      step.children.push(childResult.trace);
     } else {
-      // Attach to the corresponding step
-      const stepIndex = parseInt(firstPart, 10);
-      const step = trace.children.find(s => s.id === `${stepIndex}`);
-      if (step) step.children.push(childResult.trace);
+      // No matching step - attach directly to root action
+      trace.children.push(childResult.trace);
     }
   }
 

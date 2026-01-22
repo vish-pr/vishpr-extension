@@ -96,7 +96,9 @@ Purpose:
     'Provide the result to the user',
     'Return the completed response',
     'Deliver the outcome',
-    'The task is complete — show the result'
+    'The task is complete — show the result',
+    'Same error has occurred twice, so instead of retrying, use FINAL_RESPONSE to finish the task'
+
   ],
   input_schema: {
     type: 'object',
@@ -114,9 +116,11 @@ Purpose:
       type: 'function',
       handler: (ctx: StepContext): StepResult => ({
         result: {
-          messages_history: Array.isArray(ctx.parent_messages)
-            ? JSON.stringify(ctx.parent_messages, null, 2)
-            : ctx.parent_messages
+          messages_history: JSON.stringify(
+            (ctx.parent_messages ?? []).filter(m => m.role !== 'system'),
+            null,
+            2
+          )
         }
       })
     },

@@ -362,7 +362,20 @@ export const knowledgeBaseAdaptorAction: Action = {
     additionalProperties: false
   },
   steps: [
-    // Step 1: Generate Q&A from new knowledge
+    // Step 1: Map new_knowledge_chunk to knowledge_chunk for RIDDLER
+    {
+      type: 'function',
+      handler: (ctx: StepContext): StepResult => {
+        const newKnowledge = (ctx as StepContext & { new_knowledge_chunk: string }).new_knowledge_chunk;
+        return {
+          result: {
+            knowledge_chunk: newKnowledge
+          }
+        };
+      }
+    },
+
+    // Step 2: Generate Q&A from new knowledge
     { type: 'action', action: RIDDLER },
 
     // Step 2: Extract questions for answerer

@@ -1,97 +1,37 @@
 /**
- * Clarification actions - handles user clarification flow
+ * USER_CLARIFICATION action
  *
- * USER_CLARIFICATION: Generates options, ranks by confidence, returns special type for UI
+ * Generates options for a clarification question, returns special type for UI handling.
+ * Executor shows modal, user picks option or times out, response injected back.
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
 
-// =============================================================================
-// Constants
-// =============================================================================
-
 export const USER_CLARIFICATION = 'USER_CLARIFICATION';
 
-// Complexity to timeout mapping (milliseconds)
-const TIMEOUT_MAP: Record<string, number> = {
-  low: 8000,
-  medium: 15000,
-  high: 25000
-};
-
-// =============================================================================
-// Types
-// =============================================================================
-
-interface InputQuestion {
+// Input/output types
+interface Question {
   question: string;
   complexity: 'low' | 'medium' | 'high';
 }
 
-interface RankedOption {
+interface Option {
   label: string;
-  value: string;
   confidence: number;
   reasoning: string;
 }
 
-interface ProcessedQuestion {
-  question: string;
-  options: RankedOption[];
-  complexity: 'low' | 'medium' | 'high';
-  timeout_ms: number;
-}
-
 export interface ClarificationResult {
   type: 'user_clarification';
-  questions: ProcessedQuestion[];
-  default_answers: string[];
-  ui_config: {
-    pause_on_focus: boolean;
-    idle_resume_ms: number;
-    show_confidence_hints: boolean;
-  };
+  questions: Question[];
+  generated: Array<{
+    question_index: number;
+    options: Option[];
+  }>;
   [key: string]: unknown;
 }
 
-// =============================================================================
 // Schemas
-// =============================================================================
-
-const GENERATED_QUESTION_SCHEMA: JSONSchema = {
-  type: 'object',
-  properties: {
-    question_index: { type: 'number', description: 'Index of the question (0-based)' },
-    options: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          label: { type: 'string', description: 'Display text for the option' },
-          value: { type: 'string', description: 'Value to return when selected (snake_case)' },
-          confidence: { type: 'number', description: 'Confidence score 0-100' },
-          reasoning: { type: 'string', description: 'Brief explanation (under 15 words)' }
-        },
-        required: ['label', 'value', 'confidence', 'reasoning']
-      },
-      description: 'Generated options ranked by confidence (highest first)'
-    }
-  },
-  required: ['question_index', 'options']
-};
-
-const GENERATION_OUTPUT_SCHEMA: JSONSchema = {
-  type: 'object',
-  properties: {
-    generated: {
-      type: 'array',
-      items: GENERATED_QUESTION_SCHEMA,
-      description: 'Each question with generated options ranked by confidence'
-    }
-  },
-  required: ['generated']
-};
-
-const CLARIFICATION_INPUT_SCHEMA: JSONSchema = {
+const INPUT_SCHEMA: JSONSchema = {
   type: 'object',
   properties: {
     questions: {
@@ -99,35 +39,48 @@ const CLARIFICATION_INPUT_SCHEMA: JSONSchema = {
       items: {
         type: 'object',
         properties: {
-          question: { type: 'string', description: 'The question text' },
-          complexity: {
-            type: 'string',
-            enum: ['low', 'medium', 'high'],
-            description: 'low: yes/no, simple choice (8s). medium: 3-4 options (15s). high: open-ended (25s)'
-          }
+          question: { type: 'string' },
+          complexity: { type: 'string', enum: ['low', 'medium', 'high'] }
         },
         required: ['question', 'complexity']
-      },
-      description: 'Questions to present to user'
+      }
     },
-    context: {
-      type: 'string',
-      description: 'Why clarification is needed'
-    },
-    original_goal: {
-      type: 'string',
-      description: 'Initial user request for context'
-    }
+    context: { type: 'string' },
+    original_goal: { type: 'string' }
   },
-  required: ['questions'],
-  additionalProperties: false
+  required: ['questions']
 };
 
-// =============================================================================
-// Prompts
-// =============================================================================
+const OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    generated: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question_index: { type: 'number' },
+          options: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                label: { type: 'string' },
+                confidence: { type: 'number' },
+                reasoning: { type: 'string' }
+              },
+              required: ['label', 'confidence', 'reasoning']
+            }
+          }
+        },
+        required: ['question_index', 'options']
+      }
+    }
+  },
+  required: ['generated']
+};
 
-const GENERATION_SYSTEM_PROMPT = `You generate answer options for questions and rank them by predicted user preference.
+const SYSTEM_PROMPT = `You generate answer options for questions and rank them by predicted user preference.
 
 # Task
 For each question, generate realistic answer options and rank by likelihood the user would choose them.
@@ -138,16 +91,16 @@ MUST:
 - Generate exactly 3 options per question (no more, no less)
 - Include common/expected answers first
 - Make options mutually exclusive when possible
-- Use snake_case for values
+- Keep labels concise but descriptive
 
 SHOULD:
 - Derive options from page content and conversation context
-- Include "skip" or "cancel" for optional questions
 - For yes/no questions, consider which is safer default
 
 NEVER:
-- Generate vague options like "other" or "something else"
+- Generate meta-options like "skip", "cancel", "other", "something else", "enter manually", "custom input" - the UI provides skip and manual input separately
 - Duplicate options with different wording
+- Generate options that defer the question rather than answer it
 
 # Confidence Scoring (0-100)
 
@@ -186,92 +139,38 @@ NEVER:
 Question: "What format do you want?"
 Context: User is building a web API
 → options: [
-    {label: "JSON", value: "json", confidence: 82, reasoning: "Web APIs typically use JSON"},
-    {label: "CSV", value: "csv", confidence: 18, reasoning: "Less common for APIs"}
+    {label: "JSON", confidence: 82, reasoning: "Web APIs typically use JSON"},
+    {label: "XML", confidence: 12, reasoning: "Legacy format, less common"},
+    {label: "CSV", confidence: 6, reasoning: "Rarely used for APIs"}
   ]
 
 Question: "Which product interests you?"
 Context: User asked for budget headphones under $150, page shows Sony $199, Bose $149, AirPods $179
 → options: [
-    {label: "Bose earbuds ($149)", value: "bose_earbuds", confidence: 75, reasoning: "Only option under $150 budget"},
-    {label: "Apple AirPods ($179)", value: "apple_airpods", confidence: 15, reasoning: "Slightly over budget"},
-    {label: "Sony headphones ($199)", value: "sony_headphones", confidence: 10, reasoning: "Most over budget"}
+    {label: "Bose earbuds ($149)", confidence: 75, reasoning: "Only option under $150 budget"},
+    {label: "Apple AirPods ($179)", confidence: 15, reasoning: "Slightly over budget"},
+    {label: "Sony headphones ($199)", confidence: 10, reasoning: "Most over budget"}
   ]
 
 Question: "Should I proceed with deletion?"
-Context: No explicit preference
+Context: User asked to clean up temp files, 3 files selected
 → options: [
-    {label: "No, cancel", value: "no", confidence: 55, reasoning: "Safer default for destructive action"},
-    {label: "Yes, delete", value: "yes", confidence: 45, reasoning: "User initiated the action"}
+    {label: "Yes, delete them", confidence: 60, reasoning: "User explicitly requested cleanup"},
+    {label: "No, keep them", confidence: 30, reasoning: "Safer to confirm first"},
+    {label: "Delete only oldest", confidence: 10, reasoning: "Partial cleanup option"}
   ]`;
 
-// =============================================================================
-// Step Handlers
-// =============================================================================
-
-/**
- * Format questions for the LLM generation step
- */
-function formatQuestionsForGeneration(ctx: StepContext): StepResult {
-  const questions = ctx.questions as InputQuestion[] || [];
-
-  const questions_formatted = questions.map((q, i) =>
-    `Question ${i} [${q.complexity}]: ${q.question}`
-  ).join('\n');
-
-  return { result: { questions_formatted } };
-}
-
-interface GeneratedQuestionOutput {
-  question_index: number;
-  options: RankedOption[];
-}
-
-/**
- * Build final clarification result from generated options
- */
-function buildClarificationResult(ctx: StepContext): StepResult<ClarificationResult> {
-  const inputQuestions = ctx.questions as InputQuestion[] || [];
-  const generated = (ctx as Record<string, unknown>).generated as GeneratedQuestionOutput[] || [];
-
-  // Create a map for quick lookup
-  const generatedMap = new Map(generated.map(gq => [gq.question_index, gq.options]));
-
-  const processedQuestions: ProcessedQuestion[] = inputQuestions.map((q, i) => {
-    const options = generatedMap.get(i) || [];
-
-    return {
-      question: q.question,
-      options,
-      complexity: q.complexity,
-      timeout_ms: TIMEOUT_MAP[q.complexity] || TIMEOUT_MAP.medium
-    };
-  });
-
-  // Default answers are first (highest confidence) option of each question
-  const defaultAnswers = processedQuestions.map(q => q.options[0]?.value || '');
-
-  // Show confidence hints if we have generated options
-  const hasOptions = generated.length > 0;
-
-  const result: ClarificationResult = {
-    type: 'user_clarification',
-    questions: processedQuestions,
-    default_answers: defaultAnswers,
-    ui_config: {
-      pause_on_focus: true,
-      idle_resume_ms: 5000,
-      show_confidence_hints: hasOptions
+function buildResult(ctx: StepContext): StepResult<ClarificationResult> {
+  return {
+    result: {
+      type: 'user_clarification',
+      questions: (ctx.questions as Question[]) || [],
+      generated: ((ctx as Record<string, unknown>).generated as ClarificationResult['generated']) || []
     }
   };
-
-  return { result };
 }
 
-// =============================================================================
-// Action
-// =============================================================================
-
+// Action definition
 export const userClarificationAction: Action = {
   name: USER_CLARIFICATION,
   description: 'Request user clarification with intelligent defaults. Generates options from context, ranks by predicted preference, shows overlay UI with countdown timer, and auto-selects best guess on timeout.',
@@ -280,15 +179,11 @@ export const userClarificationAction: Action = {
     'Get user confirmation before proceeding with important action',
     'Clarify ambiguous request'
   ],
-  input_schema: CLARIFICATION_INPUT_SCHEMA,
+  input_schema: INPUT_SCHEMA,
   steps: [
     {
-      type: 'function',
-      handler: formatQuestionsForGeneration
-    },
-    {
       type: 'llm',
-      system_prompt: GENERATION_SYSTEM_PROMPT,
+      system_prompt: SYSTEM_PROMPT,
       message: `Generate and rank options for each question.
 
 {{#original_goal}}
@@ -304,23 +199,16 @@ Context: {{{context}}}
 {{/context}}
 
 Questions:
-{{{questions_formatted}}}
+{{#questions}}
+- [{{complexity}}] {{question}}
+{{/questions}}
 
 Generate realistic options for each question and rank by confidence.`,
       intelligence: 'LOW',
-      output_schema: GENERATION_OUTPUT_SCHEMA
+      output_schema: OUTPUT_SCHEMA
     },
-    {
-      type: 'function',
-      handler: buildClarificationResult
-    }
+    { type: 'function', handler: buildResult }
   ]
 };
 
-// =============================================================================
-// Exports
-// =============================================================================
-
-export const clarificationActions: Action[] = [
-  userClarificationAction
-];
+export const clarificationActions: Action[] = [userClarificationAction];

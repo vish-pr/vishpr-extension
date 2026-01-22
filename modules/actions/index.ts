@@ -18,6 +18,10 @@ import {
   KNOWLEDGE_BASE_ADAPTOR
 } from './knowledge-base-action.js';
 import { clarificationActions } from './clarification-actions.js';
+import {
+  preferenceExtractorActions,
+  PREFERENCE_EXTRACTOR
+} from './preference-extractor-action.js';
 import logger from '../logger.js';
 
 // Re-export constants
@@ -29,6 +33,7 @@ export { CLEAN_CONTENT } from './clean-content-action.js';
 export { CRITIQUE } from './critique-action.js';
 export { RIDDLER, ANSWERER, CHECKER, ADAPTAR, KNOWLEDGE_BASE_ADAPTOR } from './knowledge-base-action.js';
 export { USER_CLARIFICATION } from './clarification-actions.js';
+export { PREFERENCE_EXTRACTOR } from './preference-extractor-action.js';
 export type { ClarificationResult } from './clarification-actions.js';
 
 // Re-export types
@@ -44,7 +49,8 @@ const allActions: Action[] = [
   cleanContentAction,
   critiqueAction,
   ...knowledgeBaseActions,
-  ...clarificationActions
+  ...clarificationActions,
+  ...preferenceExtractorActions
 ];
 
 export const actionsRegistry: ActionsRegistry = Object.fromEntries(
