@@ -9,7 +9,6 @@ import { LLM_TOOL } from './llm-action.js';
 import { USER_CLARIFICATION } from './clarification-actions.js';
 import { CRITIQUE } from './critique-action.js';
 import { PREFERENCE_EXTRACTOR } from './preference-extractor-action.js';
-import { fetchBrowserState, fetchCurrentDateTime } from './context-steps.js';
 
 export const BROWSER_ROUTER = 'BROWSER_ROUTER';
 
@@ -32,8 +31,6 @@ export const routerAction: Action = {
     additionalProperties: false
   },
   steps: [
-    { type: 'function', handler: fetchBrowserState },
-    { type: 'function', handler: fetchCurrentDateTime },
     {
       type: 'llm',
       system_prompt: `You route user requests to appropriate tools.
@@ -129,6 +126,16 @@ Browser: {{{browser_state}}}
 Goal: {{{user_message}}}
 
 Select ONE tool. Use {{{stop_action}}} when objective complete or after 2 failed attempts.`,
+      continuation_message: `Previous action completed. Review the result above.
+
+Browser: {{{browser_state}}}
+Goal: {{{user_message}}}
+
+Decision:
+- If the goal is FULLY satisfied by the previous result → use {{{stop_action}}} immediately
+- If critical information is still missing → select the next tool
+
+Do NOT retry the same action unless it failed. Trust successful results.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [

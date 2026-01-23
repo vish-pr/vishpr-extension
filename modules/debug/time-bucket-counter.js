@@ -96,8 +96,7 @@ export class TimeBucketCounter {
         buckets: { minute: buckets.minute.length, hour: buckets.hour.length, day: buckets.day.length }
       }];
     }));
-    stats._lastActivity = lastActivity;
-    return stats;
+    return Object.assign(stats, { _lastActivity: lastActivity });
   }
 
   async getAllStats() {

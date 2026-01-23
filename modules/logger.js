@@ -32,7 +32,7 @@ class Logger {
     consoleMethods[level](output);
     try {
       const result = await chrome.storage.local.get([this.storageKey]);
-      const logs = result[this.storageKey] || [];
+      const logs = /** @type {string[]} */ (result[this.storageKey] || []);
       logs.push(logLine);
       if (logs.length > 500) logs.splice(0, logs.length - 500);
       await chrome.storage.local.set({ [this.storageKey]: logs });

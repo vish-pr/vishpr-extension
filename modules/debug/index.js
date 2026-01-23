@@ -107,7 +107,7 @@ export async function initDebug() {
 
   // Tab switching
   document.querySelectorAll('[data-debug-tab]').forEach(tab => {
-    tab.addEventListener('click', () => switchDebugTab(tab.dataset.debugTab));
+    tab.addEventListener('click', () => switchDebugTab(/** @type {HTMLElement} */ (tab).dataset.debugTab));
   });
 
   // Stats refresh
@@ -148,7 +148,7 @@ export async function initDebug() {
 
 async function switchDebugTab(tabName) {
   document.querySelectorAll('[data-debug-tab]').forEach(tab => {
-    tab.classList.toggle('tab-active', tab.dataset.debugTab === tabName);
+    tab.classList.toggle('tab-active', /** @type {HTMLElement} */ (tab).dataset.debugTab === tabName);
   });
   elements.debugTraceTab.classList.toggle('hidden', tabName !== 'trace');
   elements.debugStatsTab.classList.toggle('hidden', tabName !== 'stats');
@@ -620,7 +620,7 @@ function showMaximizer(content, label) {
   document.body.appendChild(overlay);
 
   // Focus the container for keyboard events
-  overlay.querySelector('.maximizer-container').focus();
+  /** @type {HTMLElement} */ (overlay.querySelector('.maximizer-container')).focus();
 }
 
 // Handle maximize button click - decode content from template

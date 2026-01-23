@@ -2,11 +2,32 @@
  * Action executor - Params in, result out
  * Uses tracer singleton for tracing and persistence
  */
-import { getBrowserStateBundle } from './chrome-api.js';
+// @ts-ignore - mustache module format differs from types
+import Mustache from 'mustache';
 import { generate } from './llm/index.js';
-import { actionsRegistry, resolveStepTemplates } from './actions/index.js';
+import { actionsRegistry } from './actions/index.js';
 import { tracer, getTraceById } from './debug/trace-collector.js';
 import { getActionStatsCounter } from './debug/time-bucket-counter.js';
+import { resolveContextForTemplate } from './actions/context-provider.js';
+
+/**
+ * Render Mustache template with fresh context
+ * Fetches context variables (browser_state, user_preferences, etc.) at render time
+ */
+async function renderWithContext(template, baseContext) {
+  const freshContext = await resolveContextForTemplate(template);
+  return Mustache.render(template, { ...baseContext, ...freshContext });
+}
+
+/**
+ * Build decision guide from action examples
+ */
+function buildDecisionGuide(availableActions) {
+  return availableActions.flatMap(name => {
+    const action = actionsRegistry[name];
+    return (action?.examples || []).map(ex => `- "${ex}" → ${name}`);
+  }).join('\n');
+}
 
 const TIMEOUT_MS = 20000;
 
@@ -178,9 +199,13 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
     if (skipped) return { skipped: true };
   }
 
-  const { systemPrompt, renderMessage } = resolveStepTemplates(step);
-  const sysPrompt = systemPrompt(context);
-  const userMsg = renderMessage(context);
+  // Build decision guide and render templates with fresh context
+  const decisionGuide = tool_choice?.available_actions
+    ? buildDecisionGuide(tool_choice.available_actions)
+    : '';
+  const templateContext = { ...context, decisionGuide };
+  const sysPrompt = await renderWithContext(step.system_prompt, templateContext);
+  const userMsg = await renderWithContext(step.message, templateContext);
 
   const tracedGenerate = createTracedGenerate(generate, actionUUID, stepIndex, traceWritePromises);
 
@@ -204,6 +229,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
 
     if (!response.tool_calls?.length) {
       traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: response.content }));
+      getActionStatsCounter().increment(actionName, 'errors').catch(() => {});
       getActionStatsCounter().increment(actionName, 'textInsteadOfTool').catch(() => {});
       conversation.push({ role: 'assistant', content: response.content });
       conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed. Use FINAL_RESPONSE if complete or if data is gathered and needs formatting or extraction.' });
@@ -220,6 +246,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
       let args;
       try { args = JSON.parse(call.function.arguments); }
       catch {
+        getActionStatsCounter().increment(actionName, 'errors').catch(() => {});
         getActionStatsCounter().increment(actionName, 'invalidJsonArgs').catch(() => {});
         addToolResult(call.id, { error: 'Invalid JSON in arguments' });
         break;
@@ -227,6 +254,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
 
       const action = actionsRegistry[toolName];
       if (!action) {
+        getActionStatsCounter().increment(actionName, 'errors').catch(() => {});
         getActionStatsCounter().increment(actionName, 'unknownAction').catch(() => {});
         addToolResult(call.id, { error: `Unknown action: ${toolName}` });
         break;
@@ -252,7 +280,8 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
       }
     }
 
-    conversation.push({ role: 'user', content: renderMessage({ ...context, browser_state: await getBrowserStateBundle() }) });
+    const continuationMsg = await renderWithContext(step.continuation_message, { ...context, decisionGuide });
+    conversation.push({ role: 'user', content: continuationMsg });
   }
 
   traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, 'Max iterations reached', { max_iterations }));

@@ -58,19 +58,36 @@ export interface FunctionStep {
   handler: (ctx: StepContext) => StepResult | Promise<StepResult>;
 }
 
-export interface LLMStep {
+// Base LLM step fields
+interface LLMStepBase {
   type: 'llm';
   system_prompt: string;
   message: string;
   intelligence: Intelligence;
-  output_schema?: JSONSchema;
-  tool_choice?: ToolChoice;
   skip_if?: (ctx: StepContext) => boolean;
 }
+
+// Single-turn LLM step with structured output
+export interface SingleTurnLLMStep extends LLMStepBase {
+  output_schema: JSONSchema;
+  tool_choice?: never;
+  continuation_message?: never;
+}
+
+// Multi-turn LLM step with tool choice (continuation_message required)
+export interface MultiTurnLLMStep extends LLMStepBase {
+  tool_choice: ToolChoice;
+  /** Message used after first turn in multi-turn loops. Required for tool_choice steps. */
+  continuation_message: string;
+  output_schema?: never;
+}
+
+export type LLMStep = SingleTurnLLMStep | MultiTurnLLMStep;
 
 export interface ActionStep {
   type: 'action';
   action: string;
+  condition?: (ctx: StepContext) => boolean;  // Only execute if returns true
 }
 
 export type Step = FunctionStep | LLMStep | ActionStep;

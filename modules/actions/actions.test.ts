@@ -4,9 +4,10 @@
  * Note: Structure checks (required fields, types) are enforced by TypeScript.
  * These tests validate runtime constraints that TS cannot check.
  */
-import mustache from 'mustache';
+import Mustache from 'mustache';
 import { actionsRegistry, BROWSER_ROUTER } from './index.js';
 import type { Action, LLMStep, ActionStep } from './types/index.js';
+import { getKnownContextVars } from './context-provider.js';
 
 let failed = 0;
 const assert = (cond: boolean, msg: string): void => {
@@ -20,7 +21,7 @@ const assert = (cond: boolean, msg: string): void => {
 // Skips variables inside sections ({{#array}}...{{/array}}) since those are item properties
 const extractVars = (str: string): Set<string> => {
   const vars = new Set<string>();
-  for (const token of mustache.parse(str)) {
+  for (const token of Mustache.parse(str)) {
     // token[0] = type: 'name', '&', '#', '^', etc.
     // token[1] = variable name
     // 'name'/'&' = variable, '#'/'^' = section (also needs to exist in context)
@@ -42,7 +43,7 @@ for (const [name, action] of Object.entries(actionsRegistry) as [string, Action]
   availableVars.add('parent_messages');
 
   let hasFunctionStep = false;
-  for (const [i, step] of action.steps.entries()) {
+  for (const [i, step] of Array.from(action.steps.entries())) {
     const id = `${name}.steps[${i}]`;
 
     if (step.type === 'function') {
@@ -65,8 +66,8 @@ for (const [name, action] of Object.entries(actionsRegistry) as [string, Action]
 
       // Validate template variables (only if no function step preceded)
       if (!hasFunctionStep) {
-        const stepVars = new Set([...availableVars, 'current_datetime', 'browser_state', 'user_preferences', ...(hasChoice ? ['decisionGuide', 'stop_action'] : [])]);
-        for (const v of [...extractVars(llmStep.system_prompt), ...extractVars(llmStep.message)]) {
+        const stepVars = new Set([...Array.from(availableVars), ...getKnownContextVars(), ...(hasChoice ? ['decisionGuide', 'stop_action'] : [])]);
+        for (const v of [...Array.from(extractVars(llmStep.system_prompt)), ...Array.from(extractVars(llmStep.message))]) {
           assert(stepVars.has(v), `${id}: unknown variable {{${v}}}`);
         }
       }

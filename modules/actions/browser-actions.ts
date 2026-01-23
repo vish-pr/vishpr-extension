@@ -6,16 +6,25 @@ import type { Action, Message, StepContext, StepResult } from './types/index.js'
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE } from './final-response-action.js';
 import { CLEAN_CONTENT } from './clean-content-action.js';
-import { fetchBrowserState } from './context-steps.js';
+import { cleanDOM } from '../utils/clean-dom.js';
+import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
+
+// Max HTML size before falling back to text+LLM mode (50KB)
+const MAX_HTML_BYTES = 50000;
 
 interface BrowserContext extends StepContext {
   tabId: number;
   url?: string;
   title?: string;
+  html?: string;
   text?: string;
+  cleanedHtml?: string;
+  contentMode?: 'html' | 'text';
   links?: Array<{ id: string; text: string }>;
   buttons?: Array<{ id: string; text: string }>;
   inputs?: Array<{ id: string; text: string }>;
+  selects?: Array<{ id: string; text: string }>;
+  textareas?: Array<{ id: string; text: string }>;
   summary?: string;
   elementId?: number;
   direction?: 'up' | 'down' | 'top' | 'bottom';
@@ -67,7 +76,13 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
 
 /**
  * READ_PAGE action
- * Extracts page content, cleans it via CLEAN_CONTENT, compresses previous reads
+ * Hybrid approach: tries cleaned HTML first, falls back to text+LLM for large pages
+ *
+ * Flow:
+ * 1. Extract raw content (HTML + elements)
+ * 2. Clean HTML, preserving structure + essential attributes
+ * 3. If HTML small enough -> return structural mode (no LLM call)
+ * 4. If HTML too big -> fall back to text + CLEAN_CONTENT LLM summarization
  */
 export const READ_PAGE: Action = {
   name: 'READ_PAGE',
@@ -92,35 +107,101 @@ export const READ_PAGE: Action = {
     additionalProperties: true // There are things available in context
   },
   steps: [
+    // Step 1: Extract raw content and determine mode
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const raw = await chrome.extractContent((ctx as BrowserContext).tabId);
-        const url = chrome.getTab((ctx as BrowserContext).tabId)?.url;
-        return { result: { url, ...raw } };
+        const c = ctx as BrowserContext;
+        const raw = await chrome.extractContent(c.tabId);
+        const url = chrome.getTab(c.tabId)?.url;
+
+        // Try to clean HTML and determine mode
+        let contentMode: 'html' | 'text' = 'text';
+        let cleanedHtml = '';
+
+        if (raw.html) {
+          try {
+            const cleaned = cleanDOM(raw.html, { maxHtmlBytes: MAX_HTML_BYTES });
+            contentMode = cleaned.mode;
+            cleanedHtml = cleaned.content;
+          } catch {
+            // Fall back to text mode on any error
+            contentMode = 'text';
+          }
+        }
+
+        // Track content mode usage
+        const stats = getActionStatsCounter();
+        stats.increment('READ_PAGE', contentMode === 'html' ? 'html_mode' : 'text_fallback').catch(() => {});
+
+        return {
+          result: {
+            url,
+            ...raw,
+            contentMode,
+            cleanedHtml: contentMode === 'html' ? cleanedHtml : undefined
+          }
+        };
       }
     },
-    { type: 'action', action: CLEAN_CONTENT },
+    // Step 2: Conditional - only run CLEAN_CONTENT if in text mode
+    {
+      type: 'function',
+      handler: (ctx: StepContext): StepResult => {
+        const c = ctx as BrowserContext;
+        if (c.contentMode === 'html') {
+          // Skip LLM summarization for HTML mode
+          return { result: { skipCleanContent: true } };
+        }
+        // Continue to CLEAN_CONTENT for text mode
+        return { result: {} };
+      }
+    },
+    // Step 3: CLEAN_CONTENT (only executes for text mode via conditional logic)
+    {
+      type: 'action',
+      action: CLEAN_CONTENT,
+      condition: (ctx: StepContext) => (ctx as BrowserContext).contentMode === 'text'
+    },
+    // Step 4: Format final result
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
         const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
+
+        // Merge all form inputs into single array
+        const allInputs = [
+          ...(c.inputs || []),
+          ...(c.selects || []),
+          ...(c.textareas || [])
+        ];
+
         chrome.updateTabContent(c.tabId, {
-          raw: { title: c.title, text: c.text, links: c.links, buttons: c.buttons, inputs: c.inputs },
+          raw: { title: c.title, text: c.text, links: c.links, buttons: c.buttons, inputs: allInputs },
           summary: c.summary
         });
-        const result = {
+
+        const result: Record<string, unknown> = {
           tabId: c.tabId,
           url: c.url,
           title: c.title,
-          text: c.text,
+          _mode: c.contentMode,
           links: c.links,
           buttons: c.buttons,
-          inputs: c.inputs,
-          _summary: c.summary
+          inputs: allInputs
         };
+
+        // Include appropriate content based on mode
+        if (c.contentMode === 'html') {
+          result.html = c.cleanedHtml;
+          result._summary = `[Structural HTML mode - ${c.cleanedHtml?.length || 0} chars]`;
+        } else {
+          result.text = c.text;
+          result._summary = c.summary;
+        }
+
         const updatedParentMessages = compressPreviousReads(c.parent_messages);
         return { result, parent_messages: updatedParentMessages };
       }
@@ -597,7 +678,6 @@ export const browserActionRouter: Action = {
     additionalProperties: true
   },
   steps: [
-    { type: 'function', handler: fetchBrowserState },
     {
       type: 'llm',
       system_prompt: `You automate browser interactions.
@@ -678,6 +758,16 @@ Browser: {{{browser_state}}}
 Goal: {{{instructions}}}
 
 If no element IDs available, READ_PAGE first. Use {{{stop_action}}} when done or after 2 failed attempts.`,
+      continuation_message: `Previous action completed. Review the result above.
+
+Browser: {{{browser_state}}}
+Goal: {{{instructions}}}
+
+Decision:
+- If the goal is FULLY achieved → use {{{stop_action}}} immediately
+- If more steps needed → select the next action
+
+Do NOT repeat successful actions. Trust previous results.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [

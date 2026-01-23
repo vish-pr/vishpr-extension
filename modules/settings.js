@@ -32,7 +32,7 @@ const STATUS = {
   VERIFYING: { inputClass: 'input-warning', textClass: 'text-warning', icon: '⏳' }
 };
 
-const tpl = id => document.getElementById(id).content.cloneNode(true).firstElementChild;
+const tpl = id => /** @type {Element} */ (/** @type {HTMLTemplateElement} */ (document.getElementById(id)).content.cloneNode(true)).firstElementChild;
 const getListEl = tier => elements[`modelList${tier.charAt(0) + tier.slice(1).toLowerCase()}`];
 
 // ============ Endpoints ============
@@ -191,7 +191,7 @@ function setupEndpointsSection() {
 // ============ Models ============
 
 async function verifyAllModels() {
-  const tasks = [], counter = getModelStatsCounter(), tiersToRender = new Set();
+  const tasks = [], counter = getModelStatsCounter(), /** @type {Set<string>} */ tiersToRender = new Set();
   let needsSave = false;
 
   // First pass: mark all models as verifying
@@ -205,7 +205,7 @@ async function verifyAllModels() {
   }
 
   // Render all tiers with verifying state
-  for (const tier of tiersToRender) renderTierModels(tier);
+  for (const tier of Array.from(tiersToRender)) renderTierModels(tier);
 
   // Second pass: start verification tasks
   for (const tier of TIERS) {
@@ -432,7 +432,7 @@ function setupDragAndDrop() {
 
 function setupModelsSection() {
   setupDragAndDrop();
-  document.querySelectorAll('.tier-add-btn').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); handleModelAdd(btn.dataset.tier); }));
+  document.querySelectorAll('.tier-add-btn').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); handleModelAdd(/** @type {HTMLElement} */ (btn).dataset.tier); }));
   elements.resetModelsBtn.addEventListener('click', handleResetModels);
 
   elements.modelsBody.addEventListener('click', e => {

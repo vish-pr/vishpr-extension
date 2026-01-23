@@ -1,27 +1,16 @@
 /**
  * Actions registry - central export for all actions
  */
-import mustache from 'mustache';
-import type { Action, ActionsRegistry, LLMStep, StepContext } from './types/index.js';
+import type { Action, ActionsRegistry } from './types/index.js';
 import { browserActions, browserActionRouter } from './browser-actions.js';
-import { finalResponseAction, FINAL_RESPONSE } from './final-response-action.js';
-import { llmAction, LLM_TOOL } from './llm-action.js';
-import { routerAction, BROWSER_ROUTER } from './router-action.js';
-import { cleanContentAction, CLEAN_CONTENT } from './clean-content-action.js';
-import { critiqueAction, CRITIQUE } from './critique-action.js';
-import {
-  knowledgeBaseActions,
-  RIDDLER,
-  ANSWERER,
-  CHECKER,
-  ADAPTAR,
-  KNOWLEDGE_BASE_ADAPTOR
-} from './knowledge-base-action.js';
+import { finalResponseAction } from './final-response-action.js';
+import { llmAction } from './llm-action.js';
+import { routerAction } from './router-action.js';
+import { cleanContentAction } from './clean-content-action.js';
+import { critiqueAction } from './critique-action.js';
+import { knowledgeBaseActions } from './knowledge-base-action.js';
 import { clarificationActions } from './clarification-actions.js';
-import {
-  preferenceExtractorActions,
-  PREFERENCE_EXTRACTOR
-} from './preference-extractor-action.js';
+import { preferenceExtractorActions } from './preference-extractor-action.js';
 import logger from '../logger.js';
 
 // Re-export constants
@@ -60,36 +49,3 @@ export const actionsRegistry: ActionsRegistry = Object.fromEntries(
 logger.info(`Loaded ${Object.keys(actionsRegistry).length} actions`);
 
 export const getAction = (name: string): Action | undefined => actionsRegistry[name];
-
-/**
- * Build decision guide from action examples
- */
-function buildDecisionGuide(availableActions: string[]): string {
-  return availableActions.flatMap(name => {
-    const action = actionsRegistry[name];
-    return (action?.examples || []).map(ex => `- "${ex}" → ${name}`);
-  }).join('\n');
-}
-
-interface ResolvedTemplates {
-  systemPrompt: (ctx: StepContext) => string;
-  renderMessage: (ctx: StepContext) => string;
-}
-
-/**
- * Resolve all templates for an LLM step
- * Returns { systemPrompt, renderMessage }
- */
-export function resolveStepTemplates(step: LLMStep): ResolvedTemplates {
-  const decisionGuide = step.tool_choice?.available_actions
-    ? buildDecisionGuide(step.tool_choice.available_actions)
-    : '';
-
-  const render = (template: string, ctx: StepContext): string =>
-    mustache.render(template, { ...ctx, decisionGuide });
-
-  return {
-    systemPrompt: (ctx: StepContext) => render(step.system_prompt, ctx),
-    renderMessage: (ctx: StepContext) => render(step.message, ctx)
-  };
-}

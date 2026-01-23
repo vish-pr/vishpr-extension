@@ -1,6 +1,7 @@
 /**
  * Tracer - Execution tracing with IndexedDB persistence
  */
+import { getActionStatsCounter } from './time-bucket-counter.js';
 
 const DB_NAME = 'vishpr_traces';
 const DB_VERSION = 1;
@@ -10,6 +11,24 @@ const MAX_TRACES = 100;
 
 let dbPromise = null;
 
+// Map traceId -> actionName for logging oversized events
+// Bounded to prevent memory leaks if actions crash before endAction()
+const traceActionNames = new Map();
+const TRACE_NAMES_MAX_SIZE = 100;
+
+function setTraceActionName(traceId, name) {
+  // Cleanup oldest entries if map is too large (handles crash scenarios)
+  if (traceActionNames.size >= TRACE_NAMES_MAX_SIZE) {
+    // Delete first half of entries (oldest, since Map maintains insertion order)
+    const deleteCount = Math.floor(TRACE_NAMES_MAX_SIZE / 2);
+    const keysToDelete = [...traceActionNames.keys()].slice(0, deleteCount);
+    for (const key of keysToDelete) {
+      traceActionNames.delete(key);
+    }
+  }
+  traceActionNames.set(traceId, name);
+}
+
 function getDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
@@ -17,7 +36,7 @@ function getDB() {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => resolve(request.result);
       request.onupgradeneeded = (e) => {
-        const db = e.target.result;
+        const db = /** @type {IDBOpenDBRequest} */ (e.target).result;
         db.createObjectStore(EVENTS_STORE, { keyPath: 'id', autoIncrement: true }).createIndex('traceId', 'traceId');
         db.createObjectStore(META_STORE, { keyPath: 'traceId' }).createIndex('timestamp', 'timestamp');
       };
@@ -180,13 +199,75 @@ async function createTraceMeta(traceId, isRoot, name = null) {
 // Append event to trace - no meta handling
 async function persistEvent(traceId, event) {
   if (!traceId) return;
-  const db = await getDB();
-  await new Promise(r => { const tx = db.transaction(EVENTS_STORE, 'readwrite'); tx.objectStore(EVENTS_STORE).add({ traceId, timestamp: Date.now(), ...event }); tx.oncomplete = r; });
+  try {
+    const db = await getDB();
+    const eventData = { traceId, timestamp: Date.now(), ...event };
+    // Safety check: skip if event is too large (shouldn't happen after sanitize, but just in case)
+    const size = JSON.stringify(eventData).length;
+    if (size > 1000000) {
+      // Log to action stats for visibility
+      const actionName = traceActionNames.get(traceId) || event.name || 'UNKNOWN';
+      console.warn(`Trace event too large (${size} bytes) for ${actionName}, skipping:`, event.type);
+      getActionStatsCounter().increment(actionName, 'oversized_events').catch(() => {});
+      return;
+    }
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(EVENTS_STORE, 'readwrite');
+      tx.objectStore(EVENTS_STORE).add(eventData);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.warn('Failed to persist trace event:', e.message);
+  }
+}
+
+// Max sizes for trace data to prevent crashes
+const MAX_STRING_LENGTH = 40000;  // 40KB per string field
+const MAX_OBJECT_SIZE = 200000;   // 200KB per serialized object
+
+function truncateString(str, maxLen = MAX_STRING_LENGTH) {
+  if (typeof str !== 'string' || str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + `... [truncated ${str.length - maxLen} chars]`;
+}
+
+function truncateValue(value, maxLen = MAX_STRING_LENGTH) {
+  if (value == null) return value;
+  if (typeof value === 'string') return truncateString(value, maxLen);
+  if (Array.isArray(value)) {
+    // Truncate array items and limit array length
+    const maxItems = 50;
+    const truncated = value.slice(0, maxItems).map(v => truncateValue(v, maxLen / 2));
+    if (value.length > maxItems) truncated.push(`... [${value.length - maxItems} more items]`);
+    return truncated;
+  }
+  if (typeof value === 'object') {
+    const result = {};
+    for (const [k, v] of Object.entries(value)) {
+      result[k] = truncateValue(v, maxLen / 2);
+    }
+    return result;
+  }
+  return value;
 }
 
 function sanitize(value) {
   if (value == null) return value;
-  try { return JSON.parse(JSON.stringify(value, (_, v) => typeof v === 'function' ? '[Function]' : v instanceof Error ? { message: v.message, name: v.name } : v)); }
+  try {
+    // First pass: handle functions and errors
+    const cleaned = JSON.parse(JSON.stringify(value, (_, v) =>
+      typeof v === 'function' ? '[Function]' :
+      v instanceof Error ? { message: v.message, name: v.name } : v
+    ));
+    // Second pass: truncate large strings
+    const truncated = truncateValue(cleaned);
+    // Final check: ensure total size is within limits
+    const json = JSON.stringify(truncated);
+    if (json.length > MAX_OBJECT_SIZE) {
+      return { _truncated: true, _size: json.length, _preview: json.slice(0, 500) + '...' };
+    }
+    return truncated;
+  }
   catch (e) { return `[Unserializable: ${e.message}]`; }
 }
 
@@ -199,6 +280,8 @@ export const tracer = {
     const isRoot = !traceId;
     const uuid = traceId || crypto.randomUUID();
     const startTime = performance.now();
+    // Track action name for oversized event logging
+    setTraceActionName(uuid, name);
     const writePromise = Promise.all([
       createTraceMeta(uuid, isRoot, name),
       persistEvent(uuid, { type: 'action_start', name, input: sanitize(input), startTime })
@@ -213,7 +296,7 @@ export const tracer = {
     const writePromise = Promise.all([
       persistEvent(uuid, { type: 'action_end', duration, output: sanitize(output), status, error: error ? sanitizeError(error) : undefined }),
       updateTrace(uuid, { status, duration })
-    ]);
+    ]).finally(() => traceActionNames.delete(uuid));  // Cleanup to prevent memory leak
     return { duration, writePromise };
   },
 

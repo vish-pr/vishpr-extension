@@ -2,6 +2,7 @@
 import { elements } from './dom.js';
 import { marked } from 'marked';
 import { getEndpoints } from './llm/index.js';
+// @ts-ignore - DOMPurify has different exports in different module systems
 import DOMPurify from 'dompurify';
 
 const messageHistory = [];
@@ -70,7 +71,7 @@ export function addMessage(role, content, { timeout = null } = {}) {
   if (isError) {
     bubbleDiv.innerHTML = `<span class="error-content">${content}</span>`;
   } else {
-    bubbleDiv.innerHTML = DOMPurify.sanitize(marked.parse(content, { breaks: true }));
+    bubbleDiv.innerHTML = DOMPurify.sanitize(/** @type {string} */ (marked.parse(content, { breaks: true })));
   }
   messageDiv.appendChild(bubbleDiv);
 

@@ -80,9 +80,5 @@ export const elements = {
   get tplModelEditing() { return lazy('tpl-model-editing')(); },
   get tplStatsCard() { return lazy('tpl-stats-card')(); },
   get tplStatsSummary() { return lazy('tpl-stats-summary')(); },
-  get tplActionCard() { return lazy('tpl-action-card')(); },
-  get tplChoiceBar() { return lazy('tpl-choice-bar')(); },
-  get tplAnomalyBadge() { return lazy('tpl-anomaly-badge')(); },
-  get tplSkipRow() { return lazy('tpl-skip-row')(); },
   get tplClarificationOption() { return lazy('tpl-clarification-option')(); },
 };

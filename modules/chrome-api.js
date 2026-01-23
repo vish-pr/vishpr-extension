@@ -239,9 +239,7 @@ class ChromeAPI {
 
   // --- Tab Telemetry ---
 
-  getAllTabs() { return this.tabs; }
   getTab(tabId) { return this.tabs.get(tabId) || null; }
-  getCurrentTabId() { return this.currentTabId; }
 
   // --- Content Storage ---
 
@@ -256,18 +254,8 @@ class ChromeAPI {
 
   toJSON() {
     const json = { windowId: this.windowId, tabs: {} };
-    for (const [tabId, tab] of this.tabs) json.tabs[tabId] = tab;
+    for (const [tabId, tab] of Array.from(this.tabs)) json.tabs[tabId] = tab;
     return json;
-  }
-
-  fromJSON(json) {
-    this.tabs.clear();
-    if (json?.windowId) {
-      this.windowId = json.windowId;
-    }
-    if (json?.tabs) {
-      Object.entries(json.tabs).forEach(([id, tab]) => this.tabs.set(+id, tab));
-    }
   }
 
   // --- Browser State Formatting (for LLM context) ---
@@ -283,7 +271,7 @@ class ChromeAPI {
       history.forEach((e, i) => lines.push(`  ${i + 1}. ${e.url} (${e.timestamp})`));
     }
 
-    const otherTabs = [...this.tabs.entries()]
+    const otherTabs = Array.from(this.tabs.entries())
       .filter(([tabId]) => tabId !== this.currentTabId)
       .sort((a, b) => (b[1].lastVisitedAt || '').localeCompare(a[1].lastVisitedAt || ''))
       .slice(0, 10);
@@ -358,9 +346,10 @@ class ChromeAPI {
       if (this._isErrorPageError(error.message)) {
         const networkError = this.getTabError(tabId);
         const errorDetail = networkError || error.message;
-        const err = new Error(`Cannot read page: ${errorDetail}`);
-        err.code = 'BROWSER_ERROR_PAGE';
-        err.url = urlBefore;
+        const err = Object.assign(new Error(`Cannot read page: ${errorDetail}`), {
+          code: 'BROWSER_ERROR_PAGE',
+          url: urlBefore
+        });
         throw err;
       }
 
@@ -373,9 +362,10 @@ class ChromeAPI {
           if (this._isErrorPageError(retryError.message)) {
             const networkError = this.getTabError(tabId);
             const errorDetail = networkError || retryError.message;
-            const err = new Error(`Cannot read page: ${errorDetail}`);
-            err.code = 'BROWSER_ERROR_PAGE';
-            err.url = urlBefore;
+            const err = Object.assign(new Error(`Cannot read page: ${errorDetail}`), {
+              code: 'BROWSER_ERROR_PAGE',
+              url: urlBefore
+            });
             throw err;
           }
           throw retryError;
@@ -441,10 +431,13 @@ class ChromeAPI {
     if (!content || typeof content !== 'object') throw new Error('Failed to extract valid content from page');
     return {
       title: content.title || 'N/A',
-      text: content.text || '',
+      html: content.html || '',  // Raw HTML for structural mode
+      text: content.text || '',  // Text fallback
       links: normalizeElements(content.links),
       buttons: normalizeElements(content.buttons),
-      inputs: normalizeElements(content.inputs)
+      inputs: normalizeElements(content.inputs),
+      selects: normalizeElements(content.selects),
+      textareas: normalizeElements(content.textareas)
     };
   }
 
@@ -458,7 +451,7 @@ class ChromeAPI {
 
   async selectOption(tabId, elementId, value) {
     return this._executeScript(tabId, (elementId, value) => {
-      const select = document.querySelector(`[data-vish-id="${elementId}"]`);
+      const select = /** @type {HTMLSelectElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
       if (!select || select.tagName !== 'SELECT') {
         return { selected: false, error: 'Select element not found' };
       }
@@ -474,7 +467,7 @@ class ChromeAPI {
 
   async checkCheckbox(tabId, elementId, checked) {
     return this._executeScript(tabId, (elementId, shouldCheck) => {
-      const checkbox = document.querySelector(`[data-vish-id="${elementId}"]`);
+      const checkbox = /** @type {HTMLInputElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
       if (!checkbox || checkbox.type !== 'checkbox') {
         return { modified: false, error: 'Checkbox not found' };
       }
@@ -489,16 +482,16 @@ class ChromeAPI {
 
   async submitForm(tabId, elementId) {
     return this._executeScript(tabId, (elementId) => {
-      const element = document.querySelector(`[data-vish-id="${elementId}"]`);
+      const element = /** @type {HTMLElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
       if (!element) {
         return { submitted: false, error: 'Element not found' };
       }
       if (element.tagName === 'BUTTON' || element.tagName === 'INPUT') {
-        element.click();
+        /** @type {HTMLButtonElement | HTMLInputElement} */ (element).click();
         return { submitted: true, method: 'click' };
       }
       if (element.tagName === 'FORM') {
-        element.submit();
+        /** @type {HTMLFormElement} */ (element).submit();
         return { submitted: true, method: 'submit' };
       }
       return { submitted: false, error: 'Element is not a form or submit button' };
@@ -566,7 +559,7 @@ class ChromeAPI {
     const startTime = Date.now();
     while (Date.now() - startTime < timeoutMs) {
       const result = await this._executeScript(tabId, (elementId) => {
-        const element = document.querySelector(`[data-vish-id="${elementId}"]`);
+        const element = /** @type {HTMLElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
         return {
           found: !!element,
           elementId,

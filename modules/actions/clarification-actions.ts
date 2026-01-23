@@ -5,7 +5,6 @@
  * updates UI with options, waits for user response or timeout.
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
-import { fetchBrowserState, fetchUserPreferences } from './context-steps.js';
 
 declare const chrome: {
   runtime: {
@@ -268,8 +267,6 @@ export const userClarificationAction: Action = {
   input_schema: INPUT_SCHEMA,
   steps: [
     { type: 'function', handler: showLoadingUIStep },
-    { type: 'function', handler: fetchBrowserState },
-    { type: 'function', handler: fetchUserPreferences },
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,

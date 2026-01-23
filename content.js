@@ -172,15 +172,25 @@ function extractPageContent() {
   // Shared counter for all interactive elements
   const elementIdCounter = { value: 0 };
 
+  // Extract interactive elements first (assigns data-vish-id)
+  const links = extractLinks(elementIdCounter);
+  const buttons = extractButtons(elementIdCounter);
+  const inputs = extractInputs(elementIdCounter);
+  const selects = extractSelects(elementIdCounter);
+  const textareas = extractTextareas(elementIdCounter);
+
   return {
     title: document.title,
     url: window.location.href,
+    // Raw HTML for structural mode (includes data-vish-id attrs)
+    html: document.body?.innerHTML || '',
+    // Text fallback for large pages
     text: cleanDocument(),
-    links: extractLinks(elementIdCounter),
-    buttons: extractButtons(elementIdCounter),
-    inputs: extractInputs(elementIdCounter),
-    selects: extractSelects(elementIdCounter),
-    textareas: extractTextareas(elementIdCounter)
+    links,
+    buttons,
+    inputs,
+    selects,
+    textareas
   };
 }
 

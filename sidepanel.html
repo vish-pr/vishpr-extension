@@ -380,69 +380,6 @@
     </div>
   </template>
 
-  <!-- Action Stats Templates -->
-  <template id="tpl-action-card">
-    <div class="action-stat-card bg-base-300/80 rounded-lg border border-base-content/8 overflow-hidden">
-      <div class="action-card-header flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-base-content/5 transition-colors">
-        <span class="action-type-dot w-2 h-2 rounded-full shrink-0"></span>
-        <span class="action-name font-mono text-xs font-medium flex-1 truncate"></span>
-        <span class="action-executions text-xs opacity-60 tabular-nums"></span>
-        <span class="action-error-rate text-xs font-mono"></span>
-        <svg class="action-expand-icon w-3 h-3 opacity-40 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
-      </div>
-      <div class="action-card-details hidden border-t border-base-content/5 px-3 py-2 space-y-2">
-        <!-- Choice Distribution -->
-        <div class="action-choices hidden">
-          <div class="text-[10px] uppercase tracking-wider opacity-40 mb-1">Tool Choices</div>
-          <div class="choice-bars space-y-1"></div>
-        </div>
-        <!-- Iterations -->
-        <div class="action-iterations hidden">
-          <div class="text-[10px] uppercase tracking-wider opacity-40 mb-1">Iterations</div>
-          <div class="flex items-center gap-2">
-            <span class="iter-avg text-xs font-mono"></span>
-            <span class="iter-max text-[10px] opacity-40"></span>
-          </div>
-        </div>
-        <!-- Anomalies -->
-        <div class="action-anomalies hidden">
-          <div class="text-[10px] uppercase tracking-wider opacity-40 mb-1">Issues</div>
-          <div class="anomaly-list flex flex-wrap gap-1"></div>
-        </div>
-        <!-- Skip Stats -->
-        <div class="action-skips hidden">
-          <div class="text-[10px] uppercase tracking-wider opacity-40 mb-1">Skip Conditions</div>
-          <div class="skip-list space-y-1"></div>
-        </div>
-      </div>
-    </div>
-  </template>
-
-  <template id="tpl-choice-bar">
-    <div class="choice-bar-row flex items-center gap-2">
-      <span class="choice-name text-[10px] font-mono w-24 truncate opacity-70"></span>
-      <div class="choice-bar-track flex-1 h-1.5 bg-base-content/10 rounded-full overflow-hidden">
-        <div class="choice-bar-fill h-full rounded-full transition-all"></div>
-      </div>
-      <span class="choice-count text-[10px] font-mono tabular-nums opacity-50 w-8 text-right"></span>
-    </div>
-  </template>
-
-  <template id="tpl-anomaly-badge">
-    <span class="anomaly-badge text-[10px] px-1.5 py-0.5 rounded bg-warning/20 text-warning font-mono"></span>
-  </template>
-
-  <template id="tpl-skip-row">
-    <div class="skip-row flex items-center gap-2">
-      <span class="skip-step text-[10px] font-mono opacity-50 w-16"></span>
-      <div class="skip-bar-track flex-1 h-1 bg-base-content/10 rounded-full overflow-hidden flex">
-        <div class="skip-bar-skipped h-full bg-info/60"></div>
-        <div class="skip-bar-run h-full bg-success/60"></div>
-      </div>
-      <span class="skip-ratio text-[10px] font-mono tabular-nums opacity-50 w-12 text-right"></span>
-    </div>
-  </template>
-
   <!-- User Clarification Overlay -->
   <dialog id="clarificationOverlay" class="modal modal-bottom sm:modal-middle">
     <div class="modal-box clarification-panel">

@@ -17,69 +17,54 @@ const OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
   properties: {
     text: { type: 'string', description: 'Cleaned main content, noise removed' },
-    links: { type: 'array', items: ELEMENT_SCHEMA, description: 'Important links only (max 10)' },
-    buttons: { type: 'array', items: ELEMENT_SCHEMA, description: 'Key action buttons only (max 5)' },
-    inputs: { type: 'array', items: ELEMENT_SCHEMA, description: 'Important form fields only (max 5)' },
+    links: { type: 'array', items: ELEMENT_SCHEMA, description: 'Relevant links (max 30)' },
+    buttons: { type: 'array', items: ELEMENT_SCHEMA, description: 'Action buttons (max 15)' },
+    inputs: { type: 'array', items: ELEMENT_SCHEMA, description: 'Form fields (max 15)' },
     summary: { type: 'string', description: '5-line summary of page content and purpose' }
   },
   required: ['text', 'links', 'buttons', 'inputs', 'summary'],
   additionalProperties: false
 };
 
-const SYSTEM_PROMPT = `You distill webpage content to essentials.
+const SYSTEM_PROMPT = `You distill webpage content for an AI agent that needs to understand and interact with the page.
 
 # Critical Rules
-MUST: Extract only content relevant to page purpose.
-MUST: Follow exact limits (links≤10, buttons≤5, inputs≤5).
-MUST: Produce exactly 5-line summary in specified format.
+MUST: Preserve content the agent might need to complete tasks.
+MUST: Keep all interactive elements that could be relevant.
+MUST: Follow limits (links≤30, buttons≤15, inputs≤15).
+MUST: Produce exactly 5-line summary.
 
-# What to REMOVE
-
-| Category | Examples |
-|----------|----------|
-| Navigation | Headers, footers, sidebars, breadcrumbs |
-| Legal/Policy | Terms, privacy, cookie notices |
-| Marketing | Ads, promotions, newsletter signups |
-| Duplicates | Same link/button appearing multiple times |
-| Hidden | Tracking inputs, honeypots, display:none |
-
-# What to KEEP
+# What to REMOVE (only clear noise)
 
 | Category | Examples |
 |----------|----------|
-| Main content | Article text, product descriptions, search results |
-| Primary actions | Submit, Buy, Login, Search buttons |
-| Core forms | Login fields, search box, checkout form |
-| Navigation links | Links that advance the user's likely task |
+| Exact duplicates | Same link/button with identical text appearing multiple times |
+| Tracking/hidden | Tracking inputs, honeypots, display:none elements |
+| Boilerplate | Cookie banners, "Accept all" popups |
+
+# What to KEEP (err on side of keeping)
+
+| Category | Examples |
+|----------|----------|
+| Main content | Article text, product info, search results, tables, lists |
+| ALL buttons | Any button the user might want to click |
+| ALL form fields | Any input, select, textarea the user might fill |
+| Navigation | Site navigation, category links, pagination |
+| Sidebar content | Related items, filters, categories |
+| Footer links | Contact, help, sitemap (often useful) |
 
 # Output Field Limits
-- text: Main content only (empty string if none)
-- links: Max 10 most relevant to page purpose
-- buttons: Max 5 primary action buttons
-- inputs: Max 5 key form fields
+- text: Main content (preserve structure with newlines)
+- links: Up to 30 relevant links
+- buttons: Up to 15 buttons
+- inputs: Up to 15 form fields
 
-# Summary Format (MANDATORY - exactly 5 lines)
+# Summary Format (exactly 5 lines)
 1. Purpose: <what this page is for>
 2. Main content: <brief description or "None">
-3. Primary actions: <comma-separated buttons or "None">
-4. Important links: <comma-separated or "None">
-5. Forms/inputs: <comma-separated or "None">
-
-# Examples
-
-Product page summary:
-1. Purpose: Product listing for wireless headphones
-2. Main content: 5 headphone products with prices and ratings
-3. Primary actions: Add to Cart, Buy Now
-4. Important links: Product details, Reviews, Compare
-5. Forms/inputs: Quantity selector
-
-Login page summary:
-1. Purpose: User authentication
-2. Main content: None
-3. Primary actions: Sign In, Create Account
-4. Important links: Forgot Password
-5. Forms/inputs: Email, Password`;
+3. Primary actions: <key buttons or "None">
+4. Navigation: <main navigation options or "None">
+5. Forms: <form fields available or "None">`;
 
 interface CleanContentContext extends StepContext {
   title?: string;
@@ -119,7 +104,7 @@ export const cleanContentAction: Action = {
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
-      message: `Distill this webpage to essentials.
+      message: `Distill this webpage for an AI agent.
 
 Title: {{{title}}}
 Text: {{{text}}}
@@ -127,8 +112,10 @@ Links: {{{linksJson}}}
 Buttons: {{{buttonsJson}}}
 Inputs: {{{inputsJson}}}
 
-Extract: main content, top 10 links, top 5 buttons, top 5 inputs.
-Produce exactly 5-line summary. Remove navigation, ads, legal content.`,
+Keep content the agent needs to understand and interact with the page.
+Extract: main content, up to 30 links, up to 15 buttons, up to 15 inputs.
+Remove only exact duplicates and tracking elements. Err on side of keeping.
+Produce exactly 5-line summary.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     }
