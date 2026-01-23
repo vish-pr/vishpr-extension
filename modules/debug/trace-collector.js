@@ -194,40 +194,50 @@ function sanitizeError(e) { return typeof e === 'string' ? e : e instanceof Erro
 
 export const tracer = {
   // traceId is passed in - parent creates composite ID, or null for root
+  // Returns { uuid, startTime, writePromise }
   startAction(traceId, name, input) {
     const isRoot = !traceId;
     const uuid = traceId || crypto.randomUUID();
     const startTime = performance.now();
-    createTraceMeta(uuid, isRoot, name);
-    persistEvent(uuid, { type: 'action_start', name, input: sanitize(input), startTime });
-    return { uuid, startTime };
+    const writePromise = Promise.all([
+      createTraceMeta(uuid, isRoot, name),
+      persistEvent(uuid, { type: 'action_start', name, input: sanitize(input), startTime })
+    ]);
+    return { uuid, startTime, writePromise };
   },
 
+  // Returns { duration, writePromise }
   endAction(uuid, startTime, output, error = null) {
     const duration = performance.now() - startTime;
     const status = error ? 'error' : 'success';
-    persistEvent(uuid, { type: 'action_end', duration, output: sanitize(output), status, error: error ? sanitizeError(error) : undefined });
-    updateTrace(uuid, { status, duration });
-    return { duration };
+    const writePromise = Promise.all([
+      persistEvent(uuid, { type: 'action_end', duration, output: sanitize(output), status, error: error ? sanitizeError(error) : undefined }),
+      updateTrace(uuid, { status, duration })
+    ]);
+    return { duration, writePromise };
   },
 
+  // Returns { startTime, writePromise }
   startStep(actionUUID, stepIndex, stepType, stepInfo = {}, context = null) {
     const startTime = performance.now();
-    persistEvent(actionUUID, { type: 'step_start', stepIndex, stepType, handler: stepInfo.handler, action: stepInfo.action, input: sanitize(context), startTime });
-    return { startTime };
+    const writePromise = persistEvent(actionUUID, { type: 'step_start', stepIndex, stepType, handler: stepInfo.handler, action: stepInfo.action, input: sanitize(context), startTime });
+    return { startTime, writePromise };
   },
 
+  // Returns writePromise
   endStep(actionUUID, stepIndex, startTime, output, error = null) {
     const status = error ? 'error' : output?.skipped ? 'skipped' : 'success';
-    persistEvent(actionUUID, { type: 'step_end', stepIndex, duration: performance.now() - startTime, output: sanitize(output), status, error: error ? sanitizeError(error) : undefined });
+    return persistEvent(actionUUID, { type: 'step_end', stepIndex, duration: performance.now() - startTime, output: sanitize(output), status, error: error ? sanitizeError(error) : undefined });
   },
 
+  // Returns writePromise
   traceLLM(actionUUID, stepIndex, model, prompt, response, duration, turn = null, maxTurns = null, error = null) {
-    persistEvent(actionUUID, { type: 'llm', stepIndex, model, prompt, output: sanitize(response), duration, turn, maxTurns, status: error ? 'error' : 'success', error: error ? sanitizeError(error) : undefined });
+    return persistEvent(actionUUID, { type: 'llm', stepIndex, model, prompt, output: sanitize(response), duration, turn, maxTurns, status: error ? 'error' : 'success', error: error ? sanitizeError(error) : undefined });
   },
 
+  // Returns writePromise
   traceWarning(actionUUID, stepIndex, message, details = null) {
-    persistEvent(actionUUID, { type: 'warning', stepIndex, message, details: details ? sanitize(details) : undefined });
+    return persistEvent(actionUUID, { type: 'warning', stepIndex, message, details: details ? sanitize(details) : undefined });
   },
 };
 

@@ -9,34 +9,54 @@ export const LLM_TOOL = 'LLM_TOOL';
 const PROMPT_GENERATOR_SYSTEM = `You craft system prompts for LLMs.
 
 # Task
-Create a focused system prompt based on user intent.
+Create a focused system prompt (under 100 words) tailored to the user's query.
 
-# Requirements
+# Prompt Structure
+1. Role assignment ("You are a [role]")
+2. Task approach (reasoning style, format)
+3. Constraints (length, tone, what to avoid)
+
+# Domain Matching
+
+Technical queries → Expert role, step-by-step reasoning, code examples
+Creative queries → Artist/writer role, evocative style, mood matching
+Analytical queries → Analyst role, structured comparison, evidence-based
+Explanatory queries → Teacher role, simple→complex progression, analogies
+
+# Rules
+
 MUST:
-- Match knowledge domain (technical, creative, analytical)
-- Specify reasoning approach (step-by-step, comparative, deductive)
-- Set appropriate tone (expert, teacher, neutral)
+- Match expertise level to query complexity
+- Specify output format when structure matters
+- Include length constraint (word/sentence limit)
 
 SHOULD:
-- Be concise (under 100 words)
-- Include format constraints when applicable
+- Use numbered steps for multi-part responses
+- Set tone (formal/casual, concise/detailed)
 
 NEVER:
-- Add unnecessary preambles
-- Include meta-instructions about "being helpful"
+- Add meta-instructions ("be helpful", "be accurate")
+- Include unnecessary preambles or caveats
+- Exceed 100 words
 
 # Examples
 
 Query: "Explain recursion"
-→ "You are a programming instructor. Explain concepts using: 1) simple definition, 2) analogy, 3) code example. Keep explanations under 200 words."
+→ "You are a programming instructor. Explain using: 1) one-sentence definition, 2) real-world analogy, 3) simple code example. Under 150 words."
 
 Query: "Write a poem about rain"
-→ "You are a poet. Write evocative, imagery-rich verse. Avoid clichés. Match the mood requested."
+→ "You are a poet. Write imagery-rich verse. Avoid clichés. Match requested mood. 8-16 lines."
 
 Query: "Debug this code"
-→ "You are a senior developer. Analyze code systematically: 1) identify the bug, 2) explain root cause, 3) provide fix. Be direct."
+→ "You are a senior developer. Analyze: 1) identify bug, 2) explain root cause, 3) provide fix with code. Be direct, no preamble."
 
-Output a single system prompt, nothing else.`;
+Query: "Compare React vs Vue"
+→ "You are a frontend architect. Compare using: learning curve, performance, ecosystem, use cases. Use table format. Under 200 words."
+
+Query: "Summarize this article"
+→ "You are a technical writer. Summarize key points in 3-5 bullet points. Preserve critical details. Under 100 words."
+
+Output only the system prompt, nothing else.`;
 
 const PROMPT_OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
@@ -94,19 +114,19 @@ export const llmAction: Action = {
     {
       type: 'llm',
       system_prompt: PROMPT_GENERATOR_SYSTEM,
-      message: `Create a system prompt for the user's query.
+      message: `Create a system prompt for this query.
 
-Justification: {{{justification}}}
+Context: {{{justification}}}
 Query: {{{instruction}}}
 
-Output a focused system prompt for this query.`,
+Output a single system prompt under 100 words. Match domain and complexity.`,
       intelligence: 'LOW',
       output_schema: PROMPT_OUTPUT_SCHEMA
     },
     {
       type: 'llm',
       system_prompt: '{{{generated_prompt}}}',
-      message: `Instruction: {{{instruction}}}`,
+      message: `{{{instruction}}}`,
       intelligence: 'HIGH',
       output_schema: RESPONSE_OUTPUT_SCHEMA
     }

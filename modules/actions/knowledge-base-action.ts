@@ -91,26 +91,45 @@ export const riddlerAction: Action = {
       type: 'llm',
       system_prompt: `You generate Q&A pairs from knowledge chunks.
 
-# Rules
-MUST:
-- Generate 2-5 questions based on complexity
-- Keep answers short (1-2 sentences)
-- Use ONLY information from provided knowledge
+# Critical Rules
+MUST: Use ONLY information explicitly stated in the knowledge chunk.
+MUST: Generate 2-5 questions based on content density.
+NEVER: Invent facts not present in the source.
 
-SHOULD:
-- Focus on key concepts and facts
-- Vary question types (what, how, why)
+# Question Guidelines
 
-NEVER:
-- Invent information not in the source
-- Create ambiguous questions`,
+| Content Type | Question Style |
+|--------------|----------------|
+| Facts/data | "What is X?" / "How many X?" |
+| Processes | "How does X work?" / "What steps are involved?" |
+| Preferences | "What does the user prefer for X?" |
+| Relationships | "How are X and Y related?" |
+
+# Answer Guidelines
+- 1-2 sentences maximum
+- Direct, factual phrasing
+- Quotable from source when possible
+
+# Examples
+
+Knowledge: "User prefers dark mode and uses Firefox browser."
+→ Q: "What color theme does the user prefer?"
+  A: "The user prefers dark mode."
+→ Q: "Which browser does the user use?"
+  A: "The user uses Firefox."
+
+Knowledge: "The API returns JSON with fields: id, name, timestamp."
+→ Q: "What format does the API return?"
+  A: "The API returns JSON."
+→ Q: "What fields are in the API response?"
+  A: "The response contains id, name, and timestamp fields."`,
       message: `Generate Q&A pairs from this knowledge.
 
 <knowledge_chunk>
 {{{knowledge_chunk}}}
 </knowledge_chunk>
 
-Create questions testing key concepts. Keep answers concise.`,
+Create 2-5 questions testing key concepts. Answers must be 1-2 sentences, directly from source.`,
       intelligence: 'MEDIUM',
       output_schema: RIDDLER_OUTPUT_SCHEMA
     }
@@ -147,16 +166,30 @@ export const answererAction: Action = {
       type: 'llm',
       system_prompt: `You answer questions using ONLY the provided knowledge base.
 
-# Rules
-MUST:
-- Answer using ONLY the knowledge base content
-- Return "Not found in knowledge base" if answer not present
-- Keep answers short (1-2 sentences)
+# Critical Rules
+MUST: Answer using ONLY information in the knowledge base.
+MUST: Return "Not found in knowledge base" if answer not present.
+NEVER: Use external knowledge or make inferences.
 
-NEVER:
-- Use external knowledge
-- Guess or infer beyond stated facts`,
-      message: `Answer questions using only this knowledge base.
+# Answer Guidelines
+- 1-2 sentences maximum
+- Quote or paraphrase from knowledge base
+- If partial match, answer what's known + note what's missing
+
+# Examples
+
+Knowledge base: "User prefers dark mode."
+Q: "What theme does the user prefer?"
+A: "The user prefers dark mode."
+
+Knowledge base: "User prefers dark mode."
+Q: "What browser does the user use?"
+A: "Not found in knowledge base."
+
+Knowledge base: "User likes coffee and tea."
+Q: "What beverages does the user like?"
+A: "The user likes coffee and tea."`,
+      message: `Answer each question using ONLY the knowledge base.
 
 <knowledge_base>
 {{{existing_knowledge_base}}}
@@ -168,7 +201,7 @@ NEVER:
 {{/questions}}
 </questions>
 
-Answer from knowledge base only. Say "Not found" if absent.`,
+For each question: answer from knowledge base OR "Not found in knowledge base".`,
       intelligence: 'MEDIUM',
       output_schema: ANSWERER_OUTPUT_SCHEMA
     }
@@ -225,17 +258,34 @@ export const checkerAction: Action = {
       system_prompt: `You rate answer correctness on a 0-10 scale.
 
 # Rating Scale
-- 10: Perfect or equivalent
-- 7-9: Mostly correct, minor issues
-- 4-6: Partially correct
-- 1-3: Mostly incorrect
-- 0: Wrong or unrelated
 
-# Rules
-MUST:
-- Compare student answer against correct answer
-- Use knowledge chunk as context
-- Rate strictly based on factual accuracy`,
+| Score | Meaning | When to Use |
+|-------|---------|-------------|
+| 10 | Perfect | Exact match or semantically equivalent |
+| 8-9 | Excellent | Correct with minor phrasing differences |
+| 6-7 | Good | Mostly correct, small omissions |
+| 4-5 | Partial | Some correct info, significant gaps |
+| 2-3 | Poor | Mostly wrong, few correct elements |
+| 0-1 | Wrong | Incorrect, unrelated, or "Not found" |
+
+# Critical Rules
+MUST: Compare student_answer against correct_answer.
+MUST: Rate based on factual accuracy, not phrasing.
+MUST: Give 0-1 for "Not found in knowledge base" responses.
+
+# Examples
+
+Correct: "User prefers dark mode"
+Student: "The user likes dark mode"
+→ Rating: 10 (semantically equivalent)
+
+Correct: "User prefers dark mode and large fonts"
+Student: "User prefers dark mode"
+→ Rating: 6 (partial, missing fonts)
+
+Correct: "API returns JSON"
+Student: "Not found in knowledge base"
+→ Rating: 0 (failed to find answer)`,
       message: `Rate each student answer against the correct answer.
 
 <knowledge_chunk>
@@ -246,7 +296,7 @@ MUST:
 {{{formatted_comparisons}}}
 </comparisons>
 
-Rate each answer 0-10 based on correctness.`,
+For each: compare student vs correct answer, rate 0-10. "Not found" = 0-1.`,
       intelligence: 'MEDIUM',
       output_schema: CHECKER_OUTPUT_SCHEMA
     }
@@ -287,19 +337,33 @@ export const adaptarAction: Action = {
       type: 'llm',
       system_prompt: `You merge new knowledge into existing knowledge bases.
 
-# Rules
-MUST:
-- Preserve ALL existing content
-- Add only information that addresses gaps
-- Keep result concise and organized
+# Critical Rules
+MUST: Preserve ALL existing content - never delete.
+MUST: Add only information from provided sources.
+MUST: Keep result concise and organized.
 
-SHOULD:
-- Group related information
-- Remove redundancy between old and new
+# Merge Strategy
+1. Start with existing knowledge base (verbatim)
+2. Identify gaps (questions not answered)
+3. Add new facts that fill those gaps
+4. Remove redundancy (same fact stated twice)
+5. Group related information together
 
-NEVER:
-- Delete existing facts
-- Add information not in sources`,
+# Format Guidelines
+- Use consistent formatting with existing content
+- Keep statements concise (1 sentence per fact)
+- Group by topic if content is substantial
+
+# Examples
+
+Existing: "User prefers dark mode."
+New: "User uses Firefox and prefers fast loading pages."
+Questions not answered: ["What browser does user use?"]
+→ Updated: "User prefers dark mode. User uses Firefox and prefers fast loading pages."
+
+Existing: "User likes coffee."
+New: "User likes coffee and prefers it black."
+→ Updated: "User likes coffee and prefers it black." (merged, not duplicated)`,
       message: `Merge new knowledge into the existing base.
 
 <new_knowledge>
@@ -318,7 +382,7 @@ NEVER:
 </questions_needing_answers>
 {{/questions_not_answered}}
 
-Add information that addresses unanswered questions. Preserve existing content.`,
+Preserve all existing content. Add new facts that answer the gaps. Remove redundancy.`,
       intelligence: 'MEDIUM',
       output_schema: ADAPTAR_OUTPUT_SCHEMA
     }
@@ -449,14 +513,16 @@ export const knowledgeBaseAdaptorAction: Action = {
       skip_if: (ctx: StepContext) => !ctx.needs_update,
       system_prompt: `You merge new knowledge into existing knowledge bases.
 
-# Rules
-MUST:
-- Preserve ALL existing content
-- Add only information that addresses gaps
-- Keep result concise
+# Critical Rules
+MUST: Preserve ALL existing content - never delete facts.
+MUST: Add only information from provided sources.
+MUST: Remove redundancy (don't duplicate facts).
 
-NEVER:
-- Delete existing facts`,
+# Merge Process
+1. Keep all existing content
+2. Add new facts that answer the gap questions
+3. Merge overlapping facts (don't repeat)
+4. Group related information`,
       message: `Merge new knowledge into the existing base.
 
 <new_knowledge>
@@ -473,7 +539,7 @@ NEVER:
 {{/questions_not_answered}}
 </questions_needing_answers>
 
-Add information addressing gaps. Preserve existing content.`,
+Output the merged knowledge base. Preserve existing + add facts for gaps. No duplicates.`,
       intelligence: 'MEDIUM',
       output_schema: ADAPTAR_OUTPUT_SCHEMA
     },

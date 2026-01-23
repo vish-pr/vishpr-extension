@@ -11,33 +11,66 @@ export const FINAL_RESPONSE = 'FINAL_RESPONSE';
 
 const DECISION_SYSTEM_PROMPT = `You decide: return answer directly OR generate extraction prompt.
 
-# Decision Rules
+# Critical Rule
+PREFER final_answer when possible - avoids unnecessary LLM call.
 
-MUST return final_answer when:
-- Last tool result answers the query completely
-- Information is user-ready (no reformatting needed)
+# Decision Matrix
 
-MUST return extraction_prompt when:
-- Answer scattered across multiple results
-- Raw data needs conversion to prose
-- Information needs summarization
+| Condition | Action |
+|-----------|--------|
+| Last result answers query completely | final_answer |
+| Information is user-ready, no formatting needed | final_answer |
+| Simple factual answer found | final_answer |
+| Error occurred, need to report it | final_answer |
+| Answer scattered across multiple results | extraction_prompt |
+| Raw data needs prose conversion | extraction_prompt |
+| Complex summarization required | extraction_prompt |
 
 # Output Format
-Return ONE of:
-- { "final_answer": "<answer>", "method": "<steps>" }
-- { "extraction_prompt": "<system prompt>" }
+
+Return exactly ONE of:
+
+## Option 1: Direct Answer
+{
+  "final_answer": "<complete answer for user>",
+  "method": "<1-2 sentence summary of steps taken>"
+}
+
+## Option 2: Need Extraction
+{
+  "extraction_prompt": "<system prompt for extraction LLM>"
+}
 
 # Examples
 
 Query: "What's the weather in Paris?"
-Last result: "22°C and sunny in Paris"
-→ final_answer: "The weather in Paris is 22°C and sunny"
+Last result: {"temp": "22°C", "condition": "sunny", "city": "Paris"}
+→ final_answer: "The weather in Paris is 22°C and sunny."
+   method: "Retrieved weather data from API."
 
-Query: "Compare prices across sites"
-Results: [raw JSON from 3 sites]
-→ extraction_prompt: "Extract prices from each site, format as comparison table"
+Query: "Find the cheapest laptop"
+Results: [3 pages of product listings as JSON]
+→ extraction_prompt: "Extract laptop names and prices. Return the cheapest option with name, price, and link. Format as: 'The cheapest is [name] at [price]. [link]'"
 
-PREFER final_answer to avoid unnecessary processing.`;
+Query: "Summarize this article"
+Results: [2000 words of article text]
+→ extraction_prompt: "Summarize key points in 3-5 bullet points. Focus on main arguments and conclusions. Under 100 words."
+
+Query: "Click the login button" (action completed)
+Last result: {"success": true, "clicked": "Login"}
+→ final_answer: "Clicked the login button."
+   method: "Located and clicked login button on page."
+
+Query: "Find email" (error occurred)
+Last result: {"error": "Element not found"}
+→ final_answer: "Could not find an email field on this page."
+   method: "Searched page but no email input was found."
+
+# Rules
+MUST: Include method field with final_answer
+MUST: Keep final_answer concise and user-friendly
+SHOULD: Prefer final_answer for simple responses
+NEVER: Return both final_answer and extraction_prompt`;
 
 const DECISION_OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
@@ -127,13 +160,15 @@ Purpose:
     {
       type: 'llm',
       system_prompt: DECISION_SYSTEM_PROMPT,
-      message: `Decide: return final_answer directly OR return extraction_prompt.
+      message: `Decide: final_answer (preferred) or extraction_prompt.
 
 <messages>
 {{{messages_history}}}
 </messages>
 
-Return final_answer if last result answers the query. Return extraction_prompt if synthesis needed.`,
+If last result answers the query → final_answer + method.
+If synthesis/formatting needed → extraction_prompt only.
+Prefer final_answer to avoid extra LLM call.`,
       intelligence: 'LOW',
       output_schema: DECISION_OUTPUT_SCHEMA
     },
@@ -141,13 +176,15 @@ Return final_answer if last result answers the query. Return extraction_prompt i
       type: 'llm',
       skip_if: (ctx: StepContext) => !!ctx.final_answer,
       system_prompt: '{{{extraction_prompt}}}',
-      message: `Extract and summarize information for the user.
+      message: `Extract and format information for the user.
 
 <messages>
 {{{messages_history}}}
 </messages>
 
-Provide: final_answer (clean, user-friendly summary) and method (brief steps taken).`,
+Return:
+- final_answer: Clean, user-friendly response (no JSON, no internal details)
+- method: 1-2 sentence summary of steps taken`,
       intelligence: 'MEDIUM',
       output_schema: FINAL_OUTPUT_SCHEMA
     }

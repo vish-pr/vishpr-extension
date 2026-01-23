@@ -8,6 +8,14 @@ import {
   getClarificationResponse
 } from './modules/clarification-ui.js';
 
+// Notify background that panel is open
+chrome.runtime.sendMessage({ action: 'panelOpened' });
+
+// Notify background when panel is closing
+window.addEventListener('unload', () => {
+  chrome.runtime.sendMessage({ action: 'panelClosed' });
+});
+
 // Listen for clarification requests from background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'showClarificationLoading') {
@@ -20,6 +28,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'updateClarificationOptions') {
     updateClarificationOptions(message.config);
+    return false;
+  }
+
+  if (message.action === 'closePanel') {
+    // Request background to close panel via chrome.sidePanel.close() API
+    chrome.runtime.sendMessage({ action: 'requestPanelClose' });
     return false;
   }
 });

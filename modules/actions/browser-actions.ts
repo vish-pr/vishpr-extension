@@ -6,6 +6,7 @@ import type { Action, Message, StepContext, StepResult } from './types/index.js'
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE } from './final-response-action.js';
 import { CLEAN_CONTENT } from './clean-content-action.js';
+import { fetchBrowserState } from './context-steps.js';
 
 interface BrowserContext extends StepContext {
   tabId: number;
@@ -596,37 +597,87 @@ export const browserActionRouter: Action = {
     additionalProperties: true
   },
   steps: [
+    { type: 'function', handler: fetchBrowserState },
     {
       type: 'llm',
       system_prompt: `You automate browser interactions.
 
-# Tools
-- READ_PAGE: Get content and element IDs
-- CLICK_ELEMENT: Click elements (requires elementId)
-- FILL_FORM: Fill inputs (requires elementId)
-- NAVIGATE_TO: Go to URL
-- SCROLL_TO: Scroll page
-- SELECT_OPTION, CHECK_CHECKBOX, SUBMIT_FORM: Form actions
-- WAIT_FOR_LOAD, WAIT_FOR_ELEMENT: Wait for state
-- GO_BACK, GO_FORWARD: History navigation
-- FINAL_RESPONSE: Task complete
+# Critical Rule
+MUST call READ_PAGE first to get element IDs before ANY interaction (click, fill, select).
+NEVER guess element IDs - they come only from READ_PAGE results.
 
-# Rules
+# Tools
+
+## Content & State
+- READ_PAGE: Extract content, links, buttons, inputs with element IDs
+- GET_PAGE_STATE: Check scroll position, viewport, load status
+
+## Interaction (require elementId from READ_PAGE)
+- CLICK_ELEMENT: Click button/link. Options: newTab, newTabActive, download
+- FILL_FORM: Fill inputs. Format: form_fields=[{elementId, value}]
+- SELECT_OPTION: Choose dropdown value
+- CHECK_CHECKBOX: Set checked state (true/false)
+- SUBMIT_FORM: Submit form by button/form element
+
+## Navigation
+- NAVIGATE_TO: Go to specific URL
+- SCROLL_TO: Scroll direction (up/down/top/bottom)
+- GO_BACK, GO_FORWARD: Browser history
+- WAIT_FOR_LOAD: Wait for page load (after navigation)
+- WAIT_FOR_ELEMENT: Wait for specific element
+
+## Completion
+- FINAL_RESPONSE: Task complete or error - terminate
+
+# Workflow Rules
+
 MUST:
-- READ_PAGE first to get element IDs before any interaction
-- Use elementIds from READ_PAGE for clicks/fills
+- READ_PAGE before any click/fill/select action
+- Use exact elementId from most recent READ_PAGE
+- WAIT_FOR_LOAD after NAVIGATE_TO or CLICK_ELEMENT on links
 
 SHOULD:
-- Wait after navigation for page load
-- Verify actions completed via READ_PAGE
+- READ_PAGE again after navigation to see new content
+- Verify action success with READ_PAGE if uncertain
 
-{{{decisionGuide}}}`,
+NEVER:
+- Click/fill without prior READ_PAGE
+- Invent or guess element IDs
+- Loop more than 3 times on same action
+
+# Error Handling
+- If element not found, READ_PAGE again (page may have changed)
+- If same error twice, use FINAL_RESPONSE to report issue
+- If action fails after retry, try alternative approach or report
+
+# Examples
+
+Task: "Click the login button"
+1. READ_PAGE → get buttons with IDs
+2. CLICK_ELEMENT with login button's elementId
+
+Task: "Search for 'laptop'"
+1. READ_PAGE → find search input ID
+2. FILL_FORM with [{elementId: X, value: "laptop"}]
+3. READ_PAGE → find submit button
+4. CLICK_ELEMENT or SUBMIT_FORM
+
+Task: "Go to amazon.com and search"
+1. NAVIGATE_TO url="https://amazon.com"
+2. WAIT_FOR_LOAD
+3. READ_PAGE → find search elements
+4. FILL_FORM + SUBMIT_FORM
+
+{{{decisionGuide}}}
+
+# Reminder
+READ_PAGE first for element IDs. Use FINAL_RESPONSE when done or stuck.`,
       message: `Execute browser interaction.
 
 Browser: {{{browser_state}}}
 Goal: {{{instructions}}}
 
-Select appropriate tool. Use {{{stop_action}}} when task complete.`,
+If no element IDs available, READ_PAGE first. Use {{{stop_action}}} when done or after 2 failed attempts.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [

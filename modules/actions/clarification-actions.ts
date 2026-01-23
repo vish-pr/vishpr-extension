@@ -5,6 +5,7 @@
  * updates UI with options, waits for user response or timeout.
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
+import { fetchBrowserState, fetchUserPreferences } from './context-steps.js';
 
 declare const chrome: {
   runtime: {
@@ -35,10 +36,10 @@ async function showLoadingUI(questions: Question[]): Promise<UserResponse[]> {
 
   // Service worker context - send message to sidepanel
   return new Promise((resolve) => {
-    const handleResponse = (message: { action: string; responses?: UserResponse[] }) => {
+    const handleResponse = (message: { action: string; responses?: unknown[] }) => {
       if (message.action === 'clarificationResponse') {
         chrome.runtime.onMessage.removeListener(handleResponse);
-        resolve(message.responses || []);
+        resolve((message.responses as UserResponse[]) || []);
       }
     };
     chrome.runtime.onMessage.addListener(handleResponse);
@@ -53,7 +54,7 @@ async function showLoadingUI(questions: Question[]): Promise<UserResponse[]> {
   });
 }
 
-async function updateOptionsUI(config: ClarificationResult): Promise<void> {
+async function updateOptionsUI(config: ClarificationUIConfig): Promise<void> {
   if (typeof document !== 'undefined') {
     const { updateClarificationOptions } = await import('../clarification-ui.js');
     updateClarificationOptions(config);
@@ -72,9 +73,9 @@ async function showLoadingUIStep(ctx: StepContext): Promise<StepResult> {
 }
 
 // Step 3: Wait for user response and build final result
-async function waitForResponseStep(ctx: StepContext): Promise<StepResult<ClarificationResult>> {
+async function waitForResponseStep(ctx: StepContext): Promise<StepResult> {
   const questions = ctx.questions as Question[];
-  const generated = (ctx as Record<string, unknown>).generated as ClarificationResult['generated'];
+  const generated = (ctx as Record<string, unknown>).generated as ClarificationUIConfig['generated'];
 
   let user_responses: UserResponse[] = [];
   if (pendingResponsePromise) {
@@ -85,11 +86,10 @@ async function waitForResponseStep(ctx: StepContext): Promise<StepResult<Clarifi
 
   return {
     result: {
-      type: 'user_clarification',
-      questions,
-      generated,
-      user_responses,
-      clarification_completed: true
+      answers: user_responses.map(r => ({
+        value: r.value,
+        is_default: r.timed_out
+      }))
     }
   };
 }
@@ -108,15 +108,19 @@ interface Option {
   reasoning: string;
 }
 
-export interface ClarificationResult {
+// Internal config for UI update (not the final result)
+interface ClarificationUIConfig {
   type: 'user_clarification';
   questions: Question[];
   generated: Array<{
     question_index: number;
     options: Option[];
   }>;
-  user_responses?: UserResponse[];
-  clarification_completed?: boolean;
+}
+
+export interface ClarificationAnswer {
+  value: string;
+  is_default: boolean;  // true if auto-selected due to timeout
 }
 
 // Schemas
@@ -169,86 +173,88 @@ const OUTPUT_SCHEMA: JSONSchema = {
   required: ['generated']
 };
 
-const SYSTEM_PROMPT = `You generate answer options for questions and rank them by predicted user preference.
+const SYSTEM_PROMPT = `You generate answer options for questions and rank by predicted user preference.
 
-# Task
-For each question, generate realistic answer options and rank by likelihood the user would choose them.
+# Critical Rules
+MUST: Generate exactly 3 options per question.
+MUST: Rank options by confidence descending.
+NEVER: Generate meta-options (skip, cancel, other, custom, something else) - UI provides these.
 
 # Option Generation
 
 MUST:
-- Generate exactly 3 options per question (no more, no less)
-- Include common/expected answers first
-- Make options mutually exclusive when possible
-- Keep labels concise but descriptive
+- Generate exactly 3 concrete answer options
+- Make options mutually exclusive
+- Keep labels concise (2-6 words)
+- Derive options from page content and context
 
 SHOULD:
-- Derive options from page content and conversation context
-- For yes/no questions, consider which is safer default
+- Put most likely answer first
+- For yes/no questions, consider safer default
 
 NEVER:
-- Generate meta-options like "skip", "cancel", "other", "something else", "enter manually", "custom input" - the UI provides skip and manual input separately
+- Generate "skip", "cancel", "other", "custom input", "something else", "enter manually"
 - Duplicate options with different wording
-- Generate options that defer the question rather than answer it
+- Generate options that defer rather than answer ("let me think", "ask again later")
 
 # Confidence Scoring (0-100)
 
-MUST consider:
-- User preferences from knowledge base (if provided) - this is the strongest signal
-- Explicit preferences stated in conversation
-- Current page content/URL indicating user intent
-- Task goal and what would best achieve it
-- Common patterns for this type of question
+## Evidence Strength → Score Range
+| Evidence Type | Score Range |
+|---------------|-------------|
+| User preferences KB says "I prefer X" | 80-100 |
+| User stated preference in conversation | 70-90 |
+| Page content/URL strongly indicates X | 60-79 |
+| Task goal suggests X is best path | 50-69 |
+| Domain convention favors X | 40-59 |
+| Common default, weak signal | 20-39 |
+| No evidence, random guess | 0-19 |
 
-SHOULD consider:
-- Implicit preferences in phrasing (formal/casual, technical/simple)
-- Previous choices in conversation if available
-- Domain conventions (e.g., developers prefer JSON, users prefer cheaper options)
-
-Scoring:
-- 80-100: Strong explicit signal (user preferences KB or user said "I prefer X")
-- 60-79: Clear implicit signal (context strongly suggests X)
-- 40-59: Moderate signal (some evidence points to X)
-- 20-39: Weak signal (slight preference or common default)
-- 0-19: No signal (random guess)
-
-# Rules
-
-MUST:
-- Return ALL generated options, ranked by confidence descending
-- Keep reasoning under 15 words
-- Ensure confidence scores reflect actual evidence
-
-NEVER:
-- Return equal confidence for all options
-- Make up evidence not in context
-- Score above 70 without clear contextual support
+## Scoring Rules
+MUST: Base scores on actual evidence in context
+MUST: Differentiate scores (no equal confidence for all)
+NEVER: Score above 70 without explicit evidence
+NEVER: Invent evidence not present in context
 
 # Examples
 
 Question: "What format do you want?"
-Context: User is building a web API
-→ options: [
-    {label: "JSON", confidence: 82, reasoning: "Web APIs typically use JSON"},
-    {label: "XML", confidence: 12, reasoning: "Legacy format, less common"},
-    {label: "CSV", confidence: 6, reasoning: "Rarely used for APIs"}
+Context: User building a web API
+→ [
+    {label: "JSON", confidence: 78, reasoning: "Web APIs use JSON by convention"},
+    {label: "XML", confidence: 14, reasoning: "Legacy format, less common"},
+    {label: "CSV", confidence: 8, reasoning: "Rarely used for APIs"}
   ]
 
-Question: "Which product interests you?"
-Context: User asked for budget headphones under $150, page shows Sony $199, Bose $149, AirPods $179
-→ options: [
-    {label: "Bose earbuds ($149)", confidence: 75, reasoning: "Only option under $150 budget"},
-    {label: "Apple AirPods ($179)", confidence: 15, reasoning: "Slightly over budget"},
-    {label: "Sony headphones ($199)", confidence: 10, reasoning: "Most over budget"}
+Question: "Which product?"
+Context: User wants headphones under $150. Page: Sony $199, Bose $149, AirPods $179
+→ [
+    {label: "Bose ($149)", confidence: 85, reasoning: "Only option within $150 budget"},
+    {label: "AirPods ($179)", confidence: 10, reasoning: "$29 over budget"},
+    {label: "Sony ($199)", confidence: 5, reasoning: "$49 over budget"}
   ]
 
-Question: "Should I proceed with deletion?"
-Context: User asked to clean up temp files, 3 files selected
-→ options: [
-    {label: "Yes, delete them", confidence: 60, reasoning: "User explicitly requested cleanup"},
-    {label: "No, keep them", confidence: 30, reasoning: "Safer to confirm first"},
-    {label: "Delete only oldest", confidence: 10, reasoning: "Partial cleanup option"}
-  ]`;
+Question: "Delete these files?"
+Context: User asked to clean temp files, 3 selected
+→ [
+    {label: "Yes, delete all 3", confidence: 65, reasoning: "User requested cleanup"},
+    {label: "No, keep them", confidence: 25, reasoning: "Deletion is irreversible"},
+    {label: "Delete oldest only", confidence: 10, reasoning: "Partial compromise"}
+  ]
+
+Question: "Which shipping speed?"
+Context: User preferences KB says "prefers fast delivery"
+→ [
+    {label: "Express (2-day)", confidence: 88, reasoning: "User prefers fast delivery"},
+    {label: "Standard (5-7 day)", confidence: 8, reasoning: "Cheaper but slower"},
+    {label: "Economy (10+ day)", confidence: 4, reasoning: "Conflicts with preference"}
+  ]
+
+# Output Requirements
+- Return exactly 3 options per question
+- Order by confidence descending
+- Keep reasoning under 15 words
+- Scores must sum to roughly 100 (±10)`;
 
 // Action definition
 export const userClarificationAction: Action = {
@@ -262,34 +268,37 @@ export const userClarificationAction: Action = {
   input_schema: INPUT_SCHEMA,
   steps: [
     { type: 'function', handler: showLoadingUIStep },
+    { type: 'function', handler: fetchBrowserState },
+    { type: 'function', handler: fetchUserPreferences },
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
-      message: `Generate and rank options for each question.
+      message: `Generate exactly 3 options per question, ranked by confidence.
 
 {{#user_preferences}}
-User preferences (use for ranking):
+# User Preferences (strongest signal for scoring)
 {{{user_preferences}}}
 {{/user_preferences}}
 
 {{#original_goal}}
-User's goal: {{{original_goal}}}
+# Goal: {{{original_goal}}}
 {{/original_goal}}
 
 {{#browser_state}}
-Current page: {{{browser_state}}}
+# Current Page: {{{browser_state}}}
 {{/browser_state}}
 
 {{#context}}
-Context: {{{context}}}
+# Context: {{{context}}}
 {{/context}}
 
-Questions:
+# Questions
 {{#questions}}
 - [{{complexity}}] {{question}}
 {{/questions}}
 
-Generate realistic options for each question and rank by confidence.`,
+For each question: 3 options, confidence descending, reasoning under 15 words.
+NEVER include skip/cancel/other options.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     },

@@ -28,39 +28,58 @@ const OUTPUT_SCHEMA: JSONSchema = {
 
 const SYSTEM_PROMPT = `You distill webpage content to essentials.
 
-# Task
-Extract only essential content from noisy webpage data.
+# Critical Rules
+MUST: Extract only content relevant to page purpose.
+MUST: Follow exact limits (links≤10, buttons≤5, inputs≤5).
+MUST: Produce exactly 5-line summary in specified format.
 
-# Removal Rules
-MUST remove:
-- Headers, footers, navigation menus
-- Legal, policy, advertising links
-- Hidden, duplicate, tracking inputs
+# What to REMOVE
 
-# Selection Rules
-MUST include:
-- Main content that explains page purpose
-- Actions user can take now
+| Category | Examples |
+|----------|----------|
+| Navigation | Headers, footers, sidebars, breadcrumbs |
+| Legal/Policy | Terms, privacy, cookie notices |
+| Marketing | Ads, promotions, newsletter signups |
+| Duplicates | Same link/button appearing multiple times |
+| Hidden | Tracking inputs, honeypots, display:none |
 
-MUST exclude:
-- UI chrome and decorative elements
-- Navigation that doesn't advance primary task
+# What to KEEP
 
-# Output Fields
+| Category | Examples |
+|----------|----------|
+| Main content | Article text, product descriptions, search results |
+| Primary actions | Submit, Buy, Login, Search buttons |
+| Core forms | Login fields, search box, checkout form |
+| Navigation links | Links that advance the user's likely task |
+
+# Output Field Limits
 - text: Main content only (empty string if none)
-- links: Primary workflow links (max 10)
-- buttons: Primary action buttons (max 5)
-- inputs: Required form fields (max 5)
+- links: Max 10 most relevant to page purpose
+- buttons: Max 5 primary action buttons
+- inputs: Max 5 key form fields
 
-# Summary Format (MANDATORY)
-Exactly 5 lines:
-1. Purpose: <page purpose>
-2. Main content: <description or "None">
-3. Primary actions: <comma-separated or "None">
+# Summary Format (MANDATORY - exactly 5 lines)
+1. Purpose: <what this page is for>
+2. Main content: <brief description or "None">
+3. Primary actions: <comma-separated buttons or "None">
 4. Important links: <comma-separated or "None">
 5. Forms/inputs: <comma-separated or "None">
 
-No explanations. No removed content.`;
+# Examples
+
+Product page summary:
+1. Purpose: Product listing for wireless headphones
+2. Main content: 5 headphone products with prices and ratings
+3. Primary actions: Add to Cart, Buy Now
+4. Important links: Product details, Reviews, Compare
+5. Forms/inputs: Quantity selector
+
+Login page summary:
+1. Purpose: User authentication
+2. Main content: None
+3. Primary actions: Sign In, Create Account
+4. Important links: Forgot Password
+5. Forms/inputs: Email, Password`;
 
 interface CleanContentContext extends StepContext {
   title?: string;
@@ -108,7 +127,8 @@ Links: {{{linksJson}}}
 Buttons: {{{buttonsJson}}}
 Inputs: {{{inputsJson}}}
 
-Extract main content and primary actions only.`,
+Extract: main content, top 10 links, top 5 buttons, top 5 inputs.
+Produce exactly 5-line summary. Remove navigation, ads, legal content.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     }

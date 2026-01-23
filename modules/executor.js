@@ -4,7 +4,7 @@
  */
 import { getBrowserStateBundle } from './chrome-api.js';
 import { generate } from './llm/index.js';
-import { actionsRegistry, resolveStepTemplates, CRITIQUE, PREFERENCE_EXTRACTOR } from './actions/index.js';
+import { actionsRegistry, resolveStepTemplates } from './actions/index.js';
 import { tracer, getTraceById } from './debug/trace-collector.js';
 import { getActionStatsCounter } from './debug/time-bucket-counter.js';
 
@@ -31,6 +31,29 @@ function validateParams(params, schema) {
   return { valid: !errors.length, errors };
 }
 
+// Fire-and-forget post-steps runner
+async function runPostSteps(postSteps, actionUUID) {
+  try {
+    const traceData = await getTraceById(actionUUID);
+    if (!traceData?.trace) return;
+
+    const context = { trace: traceData.trace };
+
+    for (const step of postSteps) {
+      if (step.type === 'action') {
+        const postStepUUID = `${actionUUID}_post_${crypto.randomUUID()}`;
+        try {
+          await executeAction(actionsRegistry[step.action], context, null, postStepUUID);
+        } catch (e) {
+          console.error(`Post-step ${step.action} failed:`, e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Post-steps failed:', e.message);
+  }
+}
+
 /**
  * Execute an action
  * @param {object} action - Action definition
@@ -39,15 +62,20 @@ function validateParams(params, schema) {
  * @param {string} traceUUID - Composite trace ID from parent (format: parentUUID_stepIndex_uuid), or null for root
  */
 export async function executeAction(action, params, parent_messages = null, traceUUID = null) {
+  // Collect all trace write promises for this action
+  const traceWritePromises = [];
+
   // Start action trace (traceUUID is composite ID from parent, or null for root)
-  const { uuid: actionUUID, startTime } = tracer.startAction(traceUUID, action.name, params);
+  const { uuid: actionUUID, startTime, writePromise: startWritePromise } = tracer.startAction(traceUUID, action.name, params);
+  traceWritePromises.push(startWritePromise);
 
   if (action.input_schema) {
     const { valid, errors } = validateParams(params, action.input_schema);
     if (!valid) {
       const error = new Error(`Validation failed for ${action.name}: ${errors.join(', ')}`);
       Object.assign(error, { isValidationError: true, validationErrors: errors });
-      tracer.endAction(actionUUID, startTime, null, error);
+      const { writePromise } = tracer.endAction(actionUUID, startTime, null, error);
+      traceWritePromises.push(writePromise);
       throw error;
     }
   }
@@ -57,10 +85,11 @@ export async function executeAction(action, params, parent_messages = null, trac
 
   for (let i = 0; i < action.steps.length; i++) {
     const step = action.steps[i];
-    const { startTime: stepStartTime } = tracer.startStep(actionUUID, i, step.type, {
+    const { startTime: stepStartTime, writePromise: stepStartWritePromise } = tracer.startStep(actionUUID, i, step.type, {
       handler: step.handler?.name,
       action: step.action,
     }, context);
+    traceWritePromises.push(stepStartWritePromise);
 
     try {
       let stepOutput;
@@ -71,7 +100,7 @@ export async function executeAction(action, params, parent_messages = null, trac
           break;
         }
         case 'llm': {
-          stepOutput = await executeLLMStep(step, context, actionUUID, i, action.name);
+          stepOutput = await executeLLMStep(step, context, actionUUID, i, action.name, traceWritePromises);
           break;
         }
         case 'action': {
@@ -82,6 +111,11 @@ export async function executeAction(action, params, parent_messages = null, trac
             context.parent_messages,
             childUUID
           );
+          // Collect child's trace write promises
+          if (stepOutput._traceWrites) {
+            traceWritePromises.push(...stepOutput._traceWrites);
+            delete stepOutput._traceWrites;
+          }
           break;
         }
         default:
@@ -94,11 +128,12 @@ export async function executeAction(action, params, parent_messages = null, trac
       }
       if (stepOutput.parent_messages) context.parent_messages = stepOutput.parent_messages;
 
-      tracer.endStep(actionUUID, i, stepStartTime, stepOutput);
+      traceWritePromises.push(tracer.endStep(actionUUID, i, stepStartTime, stepOutput));
 
     } catch (error) {
-      tracer.endStep(actionUUID, i, stepStartTime, null, error);
-      tracer.endAction(actionUUID, startTime, null, error);
+      traceWritePromises.push(tracer.endStep(actionUUID, i, stepStartTime, null, error));
+      const { writePromise } = tracer.endAction(actionUUID, startTime, null, error);
+      traceWritePromises.push(writePromise);
       getActionStatsCounter().increment(action.name, 'errors').catch(() => {});
       throw new Error(`Step ${i + 1} failed: ${error.message}`);
     }
@@ -109,130 +144,33 @@ export async function executeAction(action, params, parent_messages = null, trac
     ...(context.parent_messages && { parent_messages: context.parent_messages })
   };
 
-  const endEvent = tracer.endAction(actionUUID, startTime, result);
+  const { duration, writePromise: endWritePromise } = tracer.endAction(actionUUID, startTime, result);
+  traceWritePromises.push(endWritePromise);
 
   // Track action stats (fire-and-forget)
   getActionStatsCounter().increment(action.name, 'executions').catch(() => {});
 
-  // Only return trace info for root action (no parent)
+  // Root action: run post_steps if defined
   if (!traceUUID) {
-    // Fire-and-forget post-processing for root actions
-    const skipActions = [CRITIQUE, PREFERENCE_EXTRACTOR];
-    if (!skipActions.includes(action.name)) {
-      // Run critique and preference extraction in parallel
-      runCritiqueAsync(actionUUID);
-      runPreferenceExtractorAsync(actionUUID);
+    if (action.post_steps?.length) {
+      // Wait for all trace writes to complete before running post_steps
+      await Promise.all(traceWritePromises);
+      // Fire-and-forget post_steps
+      runPostSteps(action.post_steps, actionUUID);
     }
-    return { ...result, _traceUUID: actionUUID, _duration: endEvent.duration };
+    return { ...result, _traceUUID: actionUUID, _duration: duration };
   }
 
-  return result;
+  // Child action: return trace write promises for parent to collect
+  return { ...result, _traceWrites: traceWritePromises };
 }
 
-// Storage key for user preferences knowledge base
-const PREFERENCES_KB_KEY = 'user_preferences_kb';
-
-// Get user preferences from storage (global context for all actions)
-async function getUserPreferences() {
-  const storage = await chrome.storage.local.get(PREFERENCES_KB_KEY);
-  return storage[PREFERENCES_KB_KEY] || '';
-}
-
-// Fire-and-forget critique runner
-async function runCritiqueAsync(parentUUID) {
-  try {
-    const trace = await getTraceById(parentUUID);
-    if (!trace?.trace) return;
-    const critiqueUUID = `${parentUUID}_critique_${crypto.randomUUID()}`;
-    await executeAction(actionsRegistry[CRITIQUE], { trace: trace.trace }, null, critiqueUUID);
-  } catch (e) {
-    console.error('Critique failed:', e.message);
-  }
-}
-
-// Fire-and-forget preference extractor runner
-async function runPreferenceExtractorAsync(parentUUID) {
-  try {
-    const trace = await getTraceById(parentUUID);
-    if (!trace?.trace) return;
-
-    // Extract conversation from trace - look for parent_messages in step inputs
-    const conversation = extractConversationFromTrace(trace.trace);
-    if (!conversation || conversation.length === 0) return;
-
-    // Load existing knowledge base
-    const storage = await chrome.storage.local.get(PREFERENCES_KB_KEY);
-    const existingKB = storage[PREFERENCES_KB_KEY] || '';
-
-    // Run preference extractor
-    const extractorUUID = `${parentUUID}_preferences_${crypto.randomUUID()}`;
-    const result = await executeAction(
-      actionsRegistry[PREFERENCE_EXTRACTOR],
-      { conversation, existing_knowledge_base: existingKB },
-      null,
-      extractorUUID
-    );
-
-    // Save updated knowledge base if changed
-    if (result?.result?.knowledge_updated && result?.result?.updated_knowledge_base) {
-      await chrome.storage.local.set({ [PREFERENCES_KB_KEY]: result.result.updated_knowledge_base });
-    }
-  } catch (e) {
-    console.error('Preference extraction failed:', e.message);
-  }
-}
-
-// Extract conversation messages from trace tree
-function extractConversationFromTrace(trace) {
-  const messages = [];
-  const seen = new Set();
-
-  function collect(node) {
-    // Look for parent_messages in step inputs
-    if (node.input?.parent_messages && Array.isArray(node.input.parent_messages)) {
-      for (const msg of node.input.parent_messages) {
-        // Deduplicate by content hash
-        const key = `${msg.role}:${msg.content?.slice(0, 100)}`;
-        if (!seen.has(key) && msg.content) {
-          seen.add(key);
-          messages.push({ role: msg.role, content: msg.content });
-        }
-      }
-    }
-
-    // Look for LLM prompts and outputs as conversation
-    if (node.type === 'llm' && node.prompt) {
-      // Extract user messages from prompt
-      const userMatch = node.prompt.match(/\[USER\]: ([\s\S]*?)(?=\[(?:ASSISTANT|SYSTEM|USER)\]:|$)/gi);
-      if (userMatch) {
-        for (const match of userMatch) {
-          const content = match.replace(/^\[USER\]: /i, '').trim();
-          const key = `user:${content.slice(0, 100)}`;
-          if (!seen.has(key) && content) {
-            seen.add(key);
-            messages.push({ role: 'user', content });
-          }
-        }
-      }
-    }
-
-    // Recurse into children
-    for (const child of node.children || []) {
-      collect(child);
-    }
-  }
-
-  collect(trace);
-  return messages;
-}
-
-async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) {
+async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, traceWritePromises) {
   const { intelligence, output_schema, tool_choice, skip_if } = step;
-  const current_datetime = new Date().toLocaleString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', timeZoneName: 'short'
-  });
-  context = { ...context, browser_state: await getBrowserStateBundle(), user_preferences: await getUserPreferences(), current_datetime, stop_action: tool_choice?.stop_action };
+  // Add stop_action to context if tool_choice is defined (used in message templates)
+  if (tool_choice?.stop_action) {
+    context = { ...context, stop_action: tool_choice.stop_action };
+  }
 
   if (skip_if) {
     const skipped = skip_if(context);
@@ -244,7 +182,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) 
   const sysPrompt = systemPrompt(context);
   const userMsg = renderMessage(context);
 
-  const tracedGenerate = createTracedGenerate(generate, actionUUID, stepIndex);
+  const tracedGenerate = createTracedGenerate(generate, actionUUID, stepIndex, traceWritePromises);
 
   // Single-turn: no tool_choice
   if (!tool_choice) {
@@ -265,7 +203,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) 
     const response = await withTimeout(tracedGenerate({ messages: conversation, intelligence, tools }, turn, max_iterations), TIMEOUT_MS);
 
     if (!response.tool_calls?.length) {
-      tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: response.content });
+      traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: response.content }));
       getActionStatsCounter().increment(actionName, 'textInsteadOfTool').catch(() => {});
       conversation.push({ role: 'assistant', content: response.content });
       conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed. Use FINAL_RESPONSE if complete or if data is gathered and needs formatting or extraction.' });
@@ -297,6 +235,11 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) 
       try {
         const childUUID = `${actionUUID}_${stepIndex}_${crypto.randomUUID()}`;
         const res = await executeAction(action, args, conversation, childUUID);
+        // Collect child's trace write promises
+        if (res._traceWrites) {
+          traceWritePromises.push(...res._traceWrites);
+          delete res._traceWrites;
+        }
         if (toolName === stop_action) {
           getActionStatsCounter().increment(actionName, 'iterations', turn + 1).catch(() => {});
           return { result: res.result };
@@ -312,15 +255,19 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName) 
     conversation.push({ role: 'user', content: renderMessage({ ...context, browser_state: await getBrowserStateBundle() }) });
   }
 
-  tracer.traceWarning(actionUUID, stepIndex, 'Max iterations reached', { max_iterations });
+  traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, 'Max iterations reached', { max_iterations }));
   getActionStatsCounter().increment(actionName, 'maxIterationsReached').catch(() => {});
   getActionStatsCounter().increment(actionName, 'iterations', max_iterations).catch(() => {});
   const stopUUID = `${actionUUID}_${stepIndex}_${crypto.randomUUID()}`;
   const stopRes = await executeAction(actionsRegistry[stop_action], { justification: 'Max iterations reached' }, conversation, stopUUID);
+  // Collect stop action's trace write promises
+  if (stopRes._traceWrites) {
+    traceWritePromises.push(...stopRes._traceWrites);
+  }
   return { result: stopRes.result };
 }
 
-function createTracedGenerate(generateFn, actionUUID, stepIndex) {
+function createTracedGenerate(generateFn, actionUUID, stepIndex, traceWritePromises) {
   return async function tracedGenerate(options, turn = null, maxTurns = null) {
     const startTime = performance.now();
     let result, error;
@@ -341,7 +288,7 @@ function createTracedGenerate(generateFn, actionUUID, stepIndex) {
       ? options.messages.map(formatMessage).join('\n')
       : options.prompt || '';
 
-    tracer.traceLLM(actionUUID, stepIndex, result?.model || 'unknown', promptStr, result, duration, turn, maxTurns, error);
+    traceWritePromises.push(tracer.traceLLM(actionUUID, stepIndex, result?.model || 'unknown', promptStr, result, duration, turn, maxTurns, error));
 
     if (error) throw error;
     return result;

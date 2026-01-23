@@ -34,7 +34,7 @@ export { CRITIQUE } from './critique-action.js';
 export { RIDDLER, ANSWERER, CHECKER, ADAPTAR, KNOWLEDGE_BASE_ADAPTOR } from './knowledge-base-action.js';
 export { USER_CLARIFICATION } from './clarification-actions.js';
 export { PREFERENCE_EXTRACTOR } from './preference-extractor-action.js';
-export type { ClarificationResult } from './clarification-actions.js';
+export type { ClarificationAnswer } from './clarification-actions.js';
 
 // Re-export types
 export type { Action, ActionsRegistry, StepResult, StepContext, Message } from './types/index.js';

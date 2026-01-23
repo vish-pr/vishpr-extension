@@ -47,45 +47,75 @@ const OUTPUT_SCHEMA: JSONSchema = {
 
 const SYSTEM_PROMPT = `You analyze LLM action execution traces for improvements.
 
+# Critical Rules
+MUST: Reference exact locations (e.g., "BROWSER_ROUTER > Step 2 > system_prompt")
+MUST: Provide actionable suggestions, not vague advice
+MUST: Return empty arrays for areas with no issues
+
+# Severity Definitions
+
+| Severity | Meaning | Examples |
+|----------|---------|----------|
+| high | Task blocked or failed | Wrong tool selected, infinite loop, unrecoverable error |
+| medium | Task degraded but completed | Extra LLM calls, suboptimal path, partial results |
+| low | Minor inefficiency | Verbose prompt, unnecessary field, style issue |
+
 # Analysis Areas
 
 ## 1. Prompts
-- Clarity and specificity
-- Missing context causing confusion
-- Verbose or redundant instructions
-- Ambiguous instructions causing wrong actions
+Look for:
+- Vague instructions causing wrong actions ("handle this" → "click submit button")
+- Missing context that forced guessing
+- Contradictory rules
+- Overly verbose instructions (could be 50% shorter)
+- Missing examples for complex decisions
 
 ## 2. Efficiency
-- Unnecessary LLM calls or iterations
-- Actions that could be combined
-- Redundant data gathering
-- Suboptimal action selection
+Look for:
+- Unnecessary LLM calls (could skip or combine)
+- Redundant READ_PAGE calls without state change
+- Same action retried without modification
+- Data gathered but never used
+- Could have short-circuited earlier
 
 ## 3. Errors
-- Root cause of failures
-- Recoverability of errors
-- Missing error handling
-- Failure patterns
+Look for:
+- Root cause of failures (not just symptoms)
+- Missing error handling paths
+- Recoverable errors treated as fatal
+- Error loops (same failure repeated)
+- Cascading failures from single issue
 
-# Requirements
-MUST:
-- Reference exact locations (e.g., "BROWSER_ROUTER > Step 2 > system_prompt")
-- Provide concrete suggestions for each issue
-- Rate severity: high (blocked task), medium (degraded quality), low (minor)
+# Examples
 
-SHOULD:
-- Prioritize high-impact issues first
-- Identify patterns across multiple issues
-
-# Example Issue
+## Prompt Issue
 {
-  "location": "ROUTER > Step 1 > message",
-  "problem": "Vague instruction 'handle the request' caused wrong tool selection",
-  "suggestion": "Specify criteria: 'If URL present, use BROWSER_ACTION'",
+  "location": "ROUTER > Step 1 > system_prompt",
+  "problem": "Vague 'handle the request' caused LLM_TOOL selection when BROWSER_ACTION needed",
+  "suggestion": "Add rule: 'If task requires current web data, MUST use BROWSER_ACTION'",
   "severity": "high"
 }
 
-Return empty arrays for areas with no issues.`;
+## Efficiency Issue
+{
+  "location": "BROWSER_ROUTER > Steps 3-5",
+  "problem": "Three consecutive READ_PAGE calls with no actions between them",
+  "suggestion": "Cache page state; only READ_PAGE after navigation or interaction",
+  "severity": "medium"
+}
+
+## Error Issue
+{
+  "location": "BROWSER_ROUTER > Step 4 > CLICK_ELEMENT",
+  "problem": "Element not found error repeated 3 times with same selector",
+  "suggestion": "After 2 failures, READ_PAGE to refresh element IDs or report error",
+  "severity": "high"
+}
+
+# Output Requirements
+- Top 3 recommendations should be highest-impact, most actionable items
+- Summary should be 1-2 sentences assessing overall execution quality
+- Empty arrays for categories with no issues found`;
 
 interface CritiqueContext extends StepContext {
   trace: unknown;
@@ -127,13 +157,19 @@ export const critiqueAction: Action = {
     {
       type: 'llm',
       system_prompt: SYSTEM_PROMPT,
-      message: `Analyze this execution trace for improvements.
+      message: `Analyze this execution trace.
 
 <trace>
 {{{traceJson}}}
 </trace>
 
-Identify issues in prompts, efficiency, and errors. Provide actionable suggestions.`,
+For each issue found:
+1. Exact location (action > step > field)
+2. Specific problem (what went wrong)
+3. Concrete suggestion (how to fix)
+4. Severity (high/medium/low)
+
+Return empty arrays for categories with no issues.`,
       intelligence: 'LOW',
       output_schema: OUTPUT_SCHEMA
     }

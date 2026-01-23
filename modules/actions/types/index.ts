@@ -82,6 +82,7 @@ export interface Action {
   examples?: string[];
   input_schema: JSONSchema;
   steps: Step[];
+  post_steps?: Step[];  // Fire-and-forget steps run after result returned (root actions only)
 }
 
 // Action registry type
