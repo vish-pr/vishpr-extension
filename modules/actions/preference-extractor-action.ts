@@ -110,10 +110,6 @@ interface TraceNode {
   children?: TraceNode[];
 }
 
-interface PreferenceExtractorContext extends StepContext {
-  trace: TraceNode;
-}
-
 // =============================================================================
 // Step Handlers
 // =============================================================================
@@ -122,7 +118,7 @@ interface PreferenceExtractorContext extends StepContext {
  * Extract conversation from trace and load existing KB from storage
  */
 async function extractConversationAndLoadKB(ctx: StepContext): Promise<StepResult> {
-  const { trace } = ctx as PreferenceExtractorContext;
+  const trace = ctx.trace as TraceNode;
 
   // Extract conversation from trace
   const conversation = extractConversationFromTrace(trace);

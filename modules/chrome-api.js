@@ -425,19 +425,23 @@ class ChromeAPI {
   }
 
   async extractContent(tabId) {
-    const pageUrl = await getTabUrl(tabId);
-    this._ensureTab(tabId, pageUrl);
+    const url = await getTabUrl(tabId);
+    this._ensureTab(tabId, url);
     const content = await this._executeContentScript(tabId, ContentAction.EXTRACT_CONTENT);
     if (!content || typeof content !== 'object') throw new Error('Failed to extract valid content from page');
     return {
+      url,
       title: content.title || 'N/A',
-      html: content.html || '',  // Raw HTML for structural mode
-      text: content.text || '',  // Text fallback
       links: normalizeElements(content.links),
       buttons: normalizeElements(content.buttons),
       inputs: normalizeElements(content.inputs),
       selects: normalizeElements(content.selects),
-      textareas: normalizeElements(content.textareas)
+      textareas: normalizeElements(content.textareas),
+      content: content.content || '',
+      contentMode: content.contentMode || 'text',
+      byteSize: content.byteSize || 0,
+      rawHtmlSize: content.rawHtmlSize || 0,
+      debugLog: content.debugLog || null
     };
   }
 

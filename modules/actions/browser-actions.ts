@@ -2,44 +2,71 @@
  * Browser automation actions
  * Uses chrome-api for browser operations, returns uniform { result } shape
  */
-import type { Action, Message, StepContext, StepResult } from './types/index.js';
+import type { Action, Message, StepContext, StepResult, JSONSchema } from './types/index.js';
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE } from './final-response-action.js';
-import { CLEAN_CONTENT } from './clean-content-action.js';
-import { cleanDOM } from '../utils/clean-dom.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
-// Max HTML size before falling back to text+LLM mode (50KB)
-const MAX_HTML_BYTES = 50000;
+// Schema for LLM content cleaning output
+const ELEMENT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: { id: { type: 'string' }, text: { type: 'string' } },
+  required: ['id', 'text'],
+  additionalProperties: false
+};
 
-interface BrowserContext extends StepContext {
-  tabId: number;
-  url?: string;
-  title?: string;
-  html?: string;
-  text?: string;
-  cleanedHtml?: string;
-  contentMode?: 'html' | 'text';
-  links?: Array<{ id: string; text: string }>;
-  buttons?: Array<{ id: string; text: string }>;
-  inputs?: Array<{ id: string; text: string }>;
-  selects?: Array<{ id: string; text: string }>;
-  textareas?: Array<{ id: string; text: string }>;
-  summary?: string;
-  elementId?: number;
-  direction?: 'up' | 'down' | 'top' | 'bottom';
-  pixels?: number;
-  wait_ms?: number;
-  timeout_ms?: number;
-  form_fields?: Array<{ elementId: number; value: string }>;
-  submit?: boolean;
-  submit_element_id?: number;
-  value?: string;
-  checked?: boolean;
-  newTab?: boolean;
-  newTabActive?: boolean;
-  download?: boolean;
-}
+const CLEAN_OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    content: { type: 'string', description: 'Cleaned main content, noise removed' },
+    links: { type: 'array', items: ELEMENT_SCHEMA, description: 'Relevant links (max 30)' },
+    buttons: { type: 'array', items: ELEMENT_SCHEMA, description: 'Action buttons (max 15)' },
+    inputs: { type: 'array', items: ELEMENT_SCHEMA, description: 'Form fields (max 15)' },
+    summary: { type: 'string', description: '5-line summary of page content and purpose' }
+  },
+  required: ['content', 'links', 'buttons', 'inputs', 'summary'],
+  additionalProperties: false
+};
+
+const CLEAN_SYSTEM_PROMPT = `You distill webpage content for an AI agent that needs to understand and interact with the page.
+
+# Critical Rules
+MUST: Preserve content the agent might need to complete tasks.
+MUST: Keep all interactive elements that could be relevant.
+MUST: Follow limits (links≤30, buttons≤15, inputs≤15).
+MUST: Produce exactly 5-line summary.
+
+# What to REMOVE (only clear noise)
+
+| Category | Examples |
+|----------|----------|
+| Exact duplicates | Same link/button with identical text appearing multiple times |
+| Tracking/hidden | Tracking inputs, honeypots, display:none elements |
+| Boilerplate | Cookie banners, "Accept all" popups |
+
+# What to KEEP (err on side of keeping)
+
+| Category | Examples |
+|----------|----------|
+| Main content | Article text, product info, search results, tables, lists |
+| ALL buttons | Any button the user might want to click |
+| ALL form fields | Any input, select, textarea the user might fill |
+| Navigation | Site navigation, category links, pagination |
+| Sidebar content | Related items, filters, categories |
+| Footer links | Contact, help, sitemap (often useful) |
+
+# Output Field Limits
+- content: Main content (preserve structure with newlines)
+- links: Up to 30 relevant links
+- buttons: Up to 15 buttons
+- inputs: Up to 15 form fields
+
+# Summary Format (exactly 5 lines)
+1. Purpose: <what this page is for>
+2. Main content: <brief description or "None">
+3. Primary actions: <key buttons or "None">
+4. Navigation: <main navigation options or "None">
+5. Forms: <form fields available or "None">`;
 
 /**
  * Compress previous READ_PAGE results in messages
@@ -76,13 +103,7 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
 
 /**
  * READ_PAGE action
- * Hybrid approach: tries cleaned HTML first, falls back to text+LLM for large pages
- *
- * Flow:
- * 1. Extract raw content (HTML + elements)
- * 2. Clean HTML, preserving structure + essential attributes
- * 3. If HTML small enough -> return structural mode (no LLM call)
- * 4. If HTML too big -> fall back to text + CLEAN_CONTENT LLM summarization
+ * Extracts page content via cleanDOM in content script, then LLM cleans/summarizes
  */
 export const READ_PAGE: Action = {
   name: 'READ_PAGE',
@@ -104,105 +125,88 @@ export const READ_PAGE: Action = {
       }
     },
     required: ['tabId'],
-    additionalProperties: true // There are things available in context
+    additionalProperties: true
   },
   steps: [
-    // Step 1: Extract raw content and determine mode
+    // Step 1: Extract content (cleanDOM runs in content script)
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const c = ctx as BrowserContext;
-        const raw = await chrome.extractContent(c.tabId);
-        const url = chrome.getTab(c.tabId)?.url;
+        const raw = await chrome.extractContent(ctx.tabId);
 
-        // Try to clean HTML and determine mode
-        let contentMode: 'html' | 'text' = 'text';
-        let cleanedHtml = '';
-
-        if (raw.html) {
-          try {
-            const cleaned = cleanDOM(raw.html, { maxHtmlBytes: MAX_HTML_BYTES });
-            contentMode = cleaned.mode;
-            cleanedHtml = cleaned.content;
-          } catch {
-            // Fall back to text mode on any error
-            contentMode = 'text';
-          }
+        // Log mode and stats
+        if (raw.contentMode === 'text') {
+          const debugInfo = raw.debugLog?.length
+            ? raw.debugLog.slice(-3).map((p: { phase: string; sizeAfter: number }) => `${p.phase}:${p.sizeAfter}`).join(',')
+            : 'no-debug';
+          console.warn(`[READ_PAGE] text fallback | raw=${raw.rawHtmlSize} final=${raw.byteSize} phases=${raw.debugLog?.length ?? 0} | last3=[${debugInfo}] | ${raw.url}`);
+        } else {
+          console.log(`[READ_PAGE] html mode | raw=${raw.rawHtmlSize} cleaned=${raw.byteSize} | ${raw.url}`);
         }
 
         // Track content mode usage
         const stats = getActionStatsCounter();
-        stats.increment('READ_PAGE', contentMode === 'html' ? 'html_mode' : 'text_fallback').catch(() => {});
+        stats.increment('READ_PAGE', raw.contentMode === 'html' ? 'html_mode' : 'text_fallback').catch(() => {});
+
+        // Merge all form inputs for LLM
+        const allInputs = [...raw.inputs, ...raw.selects, ...raw.textareas];
 
         return {
           result: {
-            url,
-            ...raw,
-            contentMode,
-            cleanedHtml: contentMode === 'html' ? cleanedHtml : undefined
+            url: raw.url,
+            title: raw.title,
+            contentMode: raw.contentMode,
+            content: raw.content,
+            linksJson: JSON.stringify(raw.links, null, 2),
+            buttonsJson: JSON.stringify(raw.buttons, null, 2),
+            inputsJson: JSON.stringify(allInputs, null, 2)
           }
         };
       }
     },
-    // Step 2: Conditional - only run CLEAN_CONTENT if in text mode
+    // Step 2: LLM cleans and summarizes content
+    {
+      type: 'llm',
+      system_prompt: CLEAN_SYSTEM_PROMPT,
+      message: `Distill this webpage for an AI agent.
+
+Title: {{{title}}}
+Content: {{{content}}}
+Links: {{{linksJson}}}
+Buttons: {{{buttonsJson}}}
+Inputs: {{{inputsJson}}}
+
+Keep content the agent needs to understand and interact with the page.
+Extract: main content, up to 30 links, up to 15 buttons, up to 15 inputs.
+Remove only exact duplicates and tracking elements. Err on side of keeping.
+Produce exactly 5-line summary.`,
+      intelligence: 'LOW',
+      output_schema: CLEAN_OUTPUT_SCHEMA
+    },
+    // Step 3: Format final result
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
-        const c = ctx as BrowserContext;
-        if (c.contentMode === 'html') {
-          // Skip LLM summarization for HTML mode
-          return { result: { skipCleanContent: true } };
-        }
-        // Continue to CLEAN_CONTENT for text mode
-        return { result: {} };
-      }
-    },
-    // Step 3: CLEAN_CONTENT (only executes for text mode via conditional logic)
-    {
-      type: 'action',
-      action: CLEAN_CONTENT,
-      condition: (ctx: StepContext) => (ctx as BrowserContext).contentMode === 'text'
-    },
-    // Step 4: Format final result
-    {
-      type: 'function',
-      handler: (ctx: StepContext): StepResult => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
 
-        // Merge all form inputs into single array
-        const allInputs = [
-          ...(c.inputs || []),
-          ...(c.selects || []),
-          ...(c.textareas || [])
-        ];
-
-        chrome.updateTabContent(c.tabId, {
-          raw: { title: c.title, text: c.text, links: c.links, buttons: c.buttons, inputs: allInputs },
-          summary: c.summary
+        chrome.updateTabContent(ctx.tabId, {
+          raw: { title: ctx.title, content: ctx.content, links: ctx.links, buttons: ctx.buttons, inputs: ctx.inputs },
+          summary: ctx.summary
         });
 
         const result: Record<string, unknown> = {
-          tabId: c.tabId,
-          url: c.url,
-          title: c.title,
-          _mode: c.contentMode,
-          links: c.links,
-          buttons: c.buttons,
-          inputs: allInputs
+          tabId: ctx.tabId,
+          url: ctx.url,
+          title: ctx.title,
+          summary: ctx.summary,
+          content: ctx.content,
+          links: ctx.links,
+          buttons: ctx.buttons,
+          inputs: ctx.inputs
         };
 
-        // Include appropriate content based on mode
-        if (c.contentMode === 'html') {
-          result.html = c.cleanedHtml;
-          result._summary = `[Structural HTML mode - ${c.cleanedHtml?.length || 0} chars]`;
-        } else {
-          result.text = c.text;
-          result._summary = c.summary;
-        }
-
-        const updatedParentMessages = compressPreviousReads(c.parent_messages);
+        const updatedParentMessages = compressPreviousReads(ctx.parent_messages);
         return { result, parent_messages: updatedParentMessages };
       }
     }
@@ -236,12 +240,11 @@ export const CLICK_ELEMENT: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
-        const clickResult = await chrome.clickElement(c.tabId, c.elementId!, {
-          newTab: c.newTab || false,
-          newTabActive: c.newTabActive || false,
-          download: c.download || false
+        const clickResult = await chrome.clickElement(ctx.tabId, ctx.elementId, {
+          newTab: ctx.newTab || false,
+          newTabActive: ctx.newTabActive || false,
+          download: ctx.download || false
         });
         return { result: clickResult };
       }
@@ -273,9 +276,8 @@ export const NAVIGATE_TO: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext & { url: string };
         const chrome = getChromeAPI();
-        const navResult = await chrome.navigateTo(c.tabId, c.url);
+        const navResult = await chrome.navigateTo(ctx.tabId, ctx.url);
         return { result: navResult };
       }
     }
@@ -306,7 +308,7 @@ export const GET_PAGE_STATE: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const stateResult = await chrome.getPageState((ctx as BrowserContext).tabId);
+        const stateResult = await chrome.getPageState(ctx.tabId);
         return { result: stateResult };
       }
     }
@@ -350,13 +352,12 @@ export const FILL_FORM: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
         const fillResult = await chrome.fillForm(
-          c.tabId,
-          c.form_fields!,
-          c.submit || false,
-          c.submit_element_id
+          ctx.tabId,
+          ctx.form_fields,
+          ctx.submit || false,
+          ctx.submit_element_id
         );
         return { result: fillResult };
       }
@@ -389,9 +390,8 @@ export const SELECT_OPTION: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
-        const selectResult = await chrome.selectOption(c.tabId, c.elementId!, c.value!);
+        const selectResult = await chrome.selectOption(ctx.tabId, ctx.elementId, ctx.value);
         return { result: selectResult };
       }
     }
@@ -423,9 +423,8 @@ export const CHECK_CHECKBOX: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
-        const checkResult = await chrome.checkCheckbox(c.tabId, c.elementId!, c.checked!);
+        const checkResult = await chrome.checkCheckbox(ctx.tabId, ctx.elementId, ctx.checked);
         return { result: checkResult };
       }
     }
@@ -456,9 +455,8 @@ export const SUBMIT_FORM: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
-        const submitResult = await chrome.submitForm(c.tabId, c.elementId!);
+        const submitResult = await chrome.submitForm(ctx.tabId, ctx.elementId);
         return { result: submitResult };
       }
     }
@@ -491,13 +489,12 @@ export const SCROLL_TO: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
         const scrollResult = await chrome.scrollAndWait(
-          c.tabId,
-          c.direction!,
-          c.pixels || 500,
-          c.wait_ms || 500
+          ctx.tabId,
+          ctx.direction,
+          ctx.pixels || 500,
+          ctx.wait_ms || 500
         );
         return { result: scrollResult };
       }
@@ -529,9 +526,8 @@ export const WAIT_FOR_LOAD: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
-        const loadResult = await chrome.waitForLoad(c.tabId, c.timeout_ms || 10000);
+        const loadResult = await chrome.waitForLoad(ctx.tabId, ctx.timeout_ms || 10000);
         return { result: loadResult };
       }
     }
@@ -563,9 +559,8 @@ export const WAIT_FOR_ELEMENT: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const c = ctx as BrowserContext;
         const chrome = getChromeAPI();
-        const waitResult = await chrome.waitForElement(c.tabId, c.elementId!, c.timeout_ms || 5000);
+        const waitResult = await chrome.waitForElement(ctx.tabId, ctx.elementId, ctx.timeout_ms || 5000);
         return { result: waitResult };
       }
     }
@@ -596,7 +591,7 @@ export const GO_BACK: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const backResult = await chrome.goBack((ctx as BrowserContext).tabId);
+        const backResult = await chrome.goBack(ctx.tabId);
         return { result: backResult };
       }
     }
@@ -627,7 +622,7 @@ export const GO_FORWARD: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const forwardResult = await chrome.goForward((ctx as BrowserContext).tabId);
+        const forwardResult = await chrome.goForward(ctx.tabId);
         return { result: forwardResult };
       }
     }

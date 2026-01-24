@@ -367,8 +367,12 @@ async function renderActionStats() {
     return;
   }
 
-  // Sort by last activity (most recent first)
-  recentActions.sort((a, b) => (allStats[b]._lastActivity || 0) - (allStats[a]._lastActivity || 0));
+  // Sort by total runs (descending)
+  recentActions.sort((a, b) => {
+    const runsA = (allStats[a].executions?.total ?? allStats[a].executions ?? 0) + (allStats[a].errors?.total ?? allStats[a].errors ?? 0);
+    const runsB = (allStats[b].executions?.total ?? allStats[b].executions ?? 0) + (allStats[b].errors?.total ?? allStats[b].errors ?? 0);
+    return runsB - runsA;
+  });
 
   // Render cards as HTML
   const cardsHtml = recentActions.map(name => createActionCard(name, allStats[name])).join('');

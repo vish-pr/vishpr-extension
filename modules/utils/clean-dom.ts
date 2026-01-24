@@ -25,11 +25,13 @@ const CONFIG = {
   minAltLength: 3,              // Alt text shorter than this = meaningless
   maxCollapseIterations: 5,     // Prevent infinite loops in wrapper collapse
 
-  // Character-budget based hierarchical truncation
-  // Uses budget allocation with linear decay for nested lists
-  listBudget: 30000,            // Total character budget for list-like content
-  budgetDecayRate: 0.6,         // Items later in list get less budget (0.6 = last gets 40% of first)
-  minItemBudget: 100,           // Minimum chars per item before truncating
+  // Hierarchical budget-based truncation (applied to entire DOM)
+  // importance = text content (without tags), size = HTML size
+  // Budget allocated with linear decay: earlier siblings get more
+  targetSize: 45000,            // Target max HTML size after truncation
+  decayRate: 0.4,               // Linear decay (0.4 = last child gets 60% of first's budget)
+  minBudget: 100,               // Minimum budget per element before removal
+  preserveRatio: 0.3,           // Always preserve at least 30% of children by count
 
   // URL params worth keeping (strip all others)
   keepParams: ['q', 'query', 'search', 's', 'page', 'p', 'id', 'tab', 'v'],
@@ -130,6 +132,16 @@ export interface CleanDOMResult {
   byteSize: number;
   elementCount: number;
   urlRegistry?: Record<string, string>;
+  debugLog?: CleanupPhaseLog[];
+}
+
+export interface CleanupPhaseLog {
+  phase: string;
+  sizeBefore: number;
+  sizeAfter: number;
+  reduction: number;
+  reductionPct: string;
+  elementCount?: number;
 }
 
 export interface CleanDOMOptions {
@@ -138,6 +150,7 @@ export interface CleanDOMOptions {
   removeHidden?: boolean;
   shortenUrls?: boolean;
   urlLengthThreshold?: number;
+  debug?: boolean;
 }
 
 // ============================================================================
@@ -204,203 +217,206 @@ const cleanUrl = (href: string, keepParams: string[]): string => {
 const collapseWhitespace = (html: string): string =>
   html.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').replace(/> </g, '><').trim();
 
+// ============================================================================
+// HIERARCHICAL TRUNCATION (DFS with importance-based budgeting)
+// ============================================================================
+
 /**
- * Character-budget based hierarchical truncation
- *
- * Treats any repeating element structure as a list and allocates character
- * budget with linear decay: earlier items get more budget than later ones.
- * Nested lists inherit remaining budget from their parent item.
- *
- * @returns Number of characters used
+ * Measure actual element size using innerHTML length
+ * Previously used text * 1.5 estimate, but this was wildly inaccurate
+ * for sites like YouTube with deep nesting and custom elements (32x underestimate)
  */
-const truncateWithBudget = (
+const measureSize = (element: Element): number => {
+  return element.innerHTML.length;
+};
+
+/**
+ * Generalized hierarchical truncation using DFS
+ * Uses text content as importance metric, actual HTML size for budget
+ *
+ * @param element - Element to truncate
+ * @param budget - Available character budget for this subtree
+ * @param doc - Document for creating elements
+ * @param depth - Current recursion depth
+ * @returns Actual HTML size after truncation
+ */
+const truncateByBudget = (
   element: Element,
   budget: number,
-  decayRate: number,
   doc: Document,
   depth = 0
 ): number => {
-  // depth is used for recursive calls but not currently for logic
-  void depth;
-  const minBudget = CONFIG.minItemBudget;
+  void depth; // Used only in base case check
+  const maxDepth = 3;
+  const maxChildrenToProcess = 100; // Limit for performance
+  const decayRate = CONFIG.decayRate;
+  const minBudget = CONFIG.minBudget;
 
-  // Find list-like children (groups of 3+ similar elements)
-  const childGroups = findListGroups(element);
-
-  if (childGroups.length === 0) {
-    // No list-like structure, just return text length
-    return element.textContent?.length || 0;
+  // Base case: max depth or small enough
+  const estSize = measureSize(element);
+  if (depth >= maxDepth || estSize <= budget) {
+    return estSize;
   }
 
-  let totalUsed = 0;
+  // Get children with content (limit for performance)
+  const allChildren = Array.from(element.children);
+  const children = allChildren.filter(c =>
+    c.textContent?.trim() && !c.hasAttribute('data-truncated')
+  ).slice(0, maxChildrenToProcess * 2); // Pre-filter limit
 
-  for (const group of childGroups) {
-    const { items, parent } = group;
-    if (items.length < 3) continue; // Not really a list
+  if (children.length === 0) {
+    return estSize;
+  }
 
-    // Calculate budget for this group (proportional to current remaining budget)
-    const groupBudget = Math.min(budget - totalUsed, budget * 0.8);
-    if (groupBudget < minBudget) break;
+  // Calculate importance (text length) for each child - fast operation
+  const childData = children.map(child => ({
+    element: child,
+    importance: child.textContent?.length || 0,
+    estSize: measureSize(child)
+  }));
 
-    // Calculate weights with linear decay
-    // weight[i] = 1 - (i / n) * decayRate
-    // So first item weight = 1, last item weight = 1 - decayRate
-    const weights: number[] = [];
-    let totalWeight = 0;
-    for (let i = 0; i < items.length; i++) {
-      const w = 1 - (i / items.length) * decayRate;
-      weights.push(w);
-      totalWeight += w;
+  const totalImportance = childData.reduce((sum, c) => sum + c.importance, 0);
+  if (totalImportance === 0) return estSize;
+
+  // Calculate weights with linear decay
+  const weights: number[] = [];
+  let totalWeight = 0;
+  for (let i = 0; i < children.length; i++) {
+    const posWeight = 1 - (i / children.length) * decayRate;
+    const impWeight = childData[i].importance / totalImportance;
+    const w = posWeight * 0.6 + impWeight * children.length * 0.4;
+    weights.push(w);
+    totalWeight += w;
+  }
+
+  let usedBudget = 0;
+  let truncatedAt = -1;
+
+  for (let i = 0; i < children.length; i++) {
+    const data = childData[i];
+    const itemBudget = Math.floor((budget * weights[i]) / totalWeight);
+    const remaining = budget - usedBudget;
+
+    if (remaining < minBudget) {
+      truncatedAt = i;
+      break;
     }
 
-    let usedInGroup = 0;
-    let truncatedAt = -1;
+    const effectiveBudget = Math.min(itemBudget, remaining);
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const itemWeight = weights[i];
-      const itemBudget = Math.floor((groupBudget * itemWeight) / totalWeight);
-      const remainingGroupBudget = groupBudget - usedInGroup;
-
-      // Stop if we're out of budget
-      if (remainingGroupBudget < minBudget) {
-        truncatedAt = i;
-        break;
-      }
-
-      const effectiveBudget = Math.min(itemBudget, remainingGroupBudget);
-      const itemSize = item.textContent?.length || 0;
-
-      if (itemSize <= effectiveBudget) {
-        // Item fits within budget, recursively truncate nested lists
-        const nestedUsed = truncateWithBudget(item, effectiveBudget, decayRate, doc, depth + 1);
-        usedInGroup += nestedUsed;
-      } else {
-        // Item exceeds budget, try to truncate its nested content
-        const nestedUsed = truncateWithBudget(item, effectiveBudget, decayRate, doc, depth + 1);
-        usedInGroup += nestedUsed;
-
-        // If still way over budget after nested truncation, stop here
-        if (nestedUsed > effectiveBudget * 1.5) {
-          truncatedAt = i + 1;
-          break;
-        }
-      }
+    if (data.estSize <= effectiveBudget) {
+      usedBudget += data.estSize;
+    } else {
+      // Recursively truncate
+      const used = truncateByBudget(data.element, effectiveBudget, doc, depth + 1);
+      usedBudget += used;
     }
+  }
 
-    // Remove truncated items
-    if (truncatedAt >= 0 && truncatedAt < items.length) {
-      const removedCount = items.length - truncatedAt;
-      const removedChars = items.slice(truncatedAt).reduce(
-        (sum, el) => sum + (el.textContent?.length || 0), 0
-      );
+  // Remove truncated elements, preserving minimum ratio
+  const minPreserve = Math.max(1, Math.ceil(children.length * CONFIG.preserveRatio));
+  if (truncatedAt >= 0 && truncatedAt < children.length) {
+    const actualCutoff = Math.max(truncatedAt, minPreserve);
+    if (actualCutoff < children.length) {
+      const removedCount = children.length - actualCutoff;
+      const removedText = childData.slice(actualCutoff).reduce((s, c) => s + c.importance, 0);
 
-      for (let i = truncatedAt; i < items.length; i++) {
-        items[i].remove();
+      for (let i = actualCutoff; i < children.length; i++) {
+        children[i].remove();
       }
 
-      // Add truncation notice
-      if (parent && removedCount > 0) {
+      if (removedCount > 0 && removedText > 100) {
         const notice = doc.createElement('span');
-        notice.textContent = ` [+${removedCount} more, ~${Math.round(removedChars / 1000)}k chars]`;
+        notice.textContent = ` [+${removedCount} more, ~${Math.round(removedText / 1000)}k text]`;
         notice.setAttribute('data-truncated', String(removedCount));
-        parent.appendChild(notice);
+        element.appendChild(notice);
       }
     }
-
-    totalUsed += usedInGroup;
   }
 
-  return totalUsed;
+  return measureSize(element);
 };
 
 /**
- * Find groups of similar child elements (list-like structures)
+ * Fast truncation for very large element lists
+ * Simply removes excess items without recursing
  */
-const findListGroups = (element: Element): Array<{ items: Element[]; parent: Element }> => {
-  const groups: Array<{ items: Element[]; parent: Element }> = [];
-  const processed = new Set<Element>();
+const fastTruncateChildren = (element: Element, keepCount: number, doc: Document) => {
+  const children = Array.from(element.children).filter(c =>
+    c.textContent?.trim() && !c.hasAttribute('data-truncated')
+  );
 
-  // Helper to get element signature (tag + key classes)
-  const getSignature = (el: Element): string => {
-    const tag = el.tagName.toLowerCase();
-    const classes = Array.from(el.classList)
-      .filter(c => /item|comment|thread|post|reply|card|row|entry/i.test(c))
-      .sort()
-      .join('.');
-    return classes ? `${tag}.${classes}` : tag;
-  };
+  if (children.length <= keepCount) return;
 
-  // Walk through all descendants looking for list-like patterns
-  const containers = [element, ...Array.from(element.querySelectorAll('*'))];
+  const removedCount = children.length - keepCount;
+  const removedText = children.slice(keepCount).reduce(
+    (sum, c) => sum + (c.textContent?.length || 0), 0
+  );
 
-  for (const container of containers) {
-    if (processed.has(container)) continue;
+  for (let i = keepCount; i < children.length; i++) {
+    children[i].remove();
+  }
 
-    const children = Array.from(container.children).filter(c =>
-      c.textContent?.trim() && !processed.has(c)
+  if (removedCount > 0) {
+    const notice = doc.createElement('span');
+    notice.textContent = ` [+${removedCount} more, ~${Math.round(removedText / 1000)}k text]`;
+    notice.setAttribute('data-truncated', String(removedCount));
+    element.appendChild(notice);
+  }
+};
+
+/**
+ * Apply hierarchical truncation to the entire DOM
+ * Uses fast path for very large content
+ */
+const truncateDOM = (root: Element, doc: Document, debug = false) => {
+  const targetSize = CONFIG.targetSize;
+  const currentSize = measureSize(root);
+
+  if (debug) {
+    console.log(`[truncateDOM] currentSize=${currentSize}, targetSize=${targetSize}, threshold=${targetSize * 1.2}`);
+  }
+
+  // Skip if already under target or only slightly over
+  if (currentSize <= targetSize * 1.2) {
+    if (debug) console.log('[truncateDOM] Skipped: under threshold');
+    return;
+  }
+
+  // For very large DOMs (>500KB HTML), use fast path
+  if (currentSize > 500000) {
+    // Find large containers - use lower thresholds for YouTube-style DOMs
+    const containers = Array.from(root.querySelectorAll('*')).filter(el =>
+      el.children.length > 10 && measureSize(el) > 5000
     );
-    if (children.length < 3) continue;
 
-    // Group children by signature
-    const bySignature = new Map<string, Element[]>();
-    for (const child of children) {
-      const sig = getSignature(child);
-      if (!bySignature.has(sig)) bySignature.set(sig, []);
-      bySignature.get(sig)!.push(child);
+    if (debug) {
+      console.log(`[truncateDOM] Fast path: found ${containers.length} large containers`);
     }
 
-    // Add groups of 3+ similar items
-    for (const [, items] of bySignature) {
-      if (items.length >= 3) {
-        groups.push({ items, parent: container });
-        items.forEach(item => processed.add(item));
+    // Sort by size descending and truncate the largest ones
+    containers.sort((a, b) => measureSize(b) - measureSize(a));
+
+    const keepRatio = Math.max(0.05, targetSize / currentSize); // More aggressive: 5% minimum
+    if (debug) console.log(`[truncateDOM] keepRatio=${keepRatio.toFixed(3)}`);
+
+    for (const container of containers.slice(0, 50)) { // Process top 50 largest
+      const childCount = container.children.length;
+      const containerSize = measureSize(container);
+      const keepCount = Math.max(3, Math.ceil(childCount * keepRatio)); // Keep at least 3
+
+      if (debug && childCount > keepCount) {
+        console.log(`[truncateDOM] Truncating ${container.tagName}: ${childCount} children → ${keepCount}, size=${containerSize}`);
       }
+
+      fastTruncateChildren(container, keepCount, doc);
     }
+    return;
   }
 
-  return groups;
-};
-
-/**
- * Truncate hierarchical list-like content using character budgets
- * Detects comment threads, repeated items, and nested structures
- */
-const truncateHierarchicalLists = (root: Element, doc: Document) => {
-  const budget = CONFIG.listBudget;
-  const decayRate = CONFIG.budgetDecayRate;
-
-  // Strategy 1: Use known comment patterns to find containers
-  for (const pattern of COMMENT_PATTERNS) {
-    try {
-      const containers = root.querySelectorAll(pattern.container);
-      for (const container of Array.from(containers)) {
-        truncateWithBudget(container, budget, decayRate, doc);
-      }
-    } catch { /* Selector may not be valid */ }
-  }
-
-  // Strategy 2: Find any large list-like structures not covered by patterns
-  const largeElements = Array.from(root.querySelectorAll('*')).filter(el => {
-    const size = el.textContent?.length || 0;
-    return size > budget && el.children.length >= 5;
-  });
-
-  for (const el of largeElements) {
-    // Skip if already processed (inside a comment container)
-    let isNested = false;
-    for (const pattern of COMMENT_PATTERNS) {
-      try {
-        if (el.closest(pattern.container)) {
-          isNested = true;
-          break;
-        }
-      } catch {}
-    }
-    if (!isNested) {
-      truncateWithBudget(el, budget, decayRate, doc);
-    }
-  }
+  // Normal path for moderate-sized DOMs
+  if (debug) console.log('[truncateDOM] Using budget-based truncation');
+  truncateByBudget(root, targetSize, doc);
 };
 
 // ============================================================================
@@ -413,7 +429,8 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
     preserveQueryParams = false,
     removeHidden = true,
     shortenUrls = true,
-    urlLengthThreshold = CONFIG.urlLengthThreshold
+    urlLengthThreshold = CONFIG.urlLengthThreshold,
+    debug = false
   } = options;
 
   const urlRegistry: Record<string, string> = {};
@@ -422,6 +439,22 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
     const ref = `[${prefix}${++urlCounter}]`;
     urlRegistry[ref] = url;
     return ref;
+  };
+
+  // Debug logging helper
+  const debugLog: CleanupPhaseLog[] = [];
+  const logPhase = (phase: string, sizeBefore: number, root: Element) => {
+    if (!debug) return;
+    const sizeAfter = root.innerHTML.length;
+    const reduction = sizeBefore - sizeAfter;
+    debugLog.push({
+      phase,
+      sizeBefore,
+      sizeAfter,
+      reduction,
+      reductionPct: sizeBefore > 0 ? `${((reduction / sizeBefore) * 100).toFixed(1)}%` : '0%',
+      elementCount: root.querySelectorAll('*').length
+    });
   };
 
   // Empty input
@@ -439,27 +472,45 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
   }
 
   const root = doc.body || doc.documentElement;
+  let currentSize = root.innerHTML.length;
+
+  if (debug) {
+    debugLog.push({
+      phase: '0-parsed',
+      sizeBefore: html.length,
+      sizeAfter: currentSize,
+      reduction: html.length - currentSize,
+      reductionPct: `${(((html.length - currentSize) / html.length) * 100).toFixed(1)}%`,
+      elementCount: root.querySelectorAll('*').length
+    });
+  }
+
+  // ========== CLEANUP PHASES (remove noise, clean attributes) ==========
 
   // Phase 1: Remove noise tags and selectors
+  currentSize = root.innerHTML.length;
   removeByTags(root, REMOVE_TAGS);
   removeBySelectors(root, REMOVE_SELECTORS);
+  logPhase('1-removeTags+Selectors', currentSize, root);
 
-  // Phase 2: Truncate hierarchical list-like content (comments, feeds, etc.)
-  truncateHierarchicalLists(root, doc);
-
-  // Phase 3: Remove meaningless images (no/generic alt)
+  // Phase 2: Remove meaningless images (no/generic alt)
+  currentSize = root.innerHTML.length;
   for (const img of Array.from(root.querySelectorAll('img'))) {
     const alt = img.getAttribute('alt')?.trim() || '';
     if (alt.length < CONFIG.minAltLength || GENERIC_ALT.has(alt.toLowerCase())) img.remove();
   }
+  logPhase('2-removeImages', currentSize, root);
 
-  // Phase 4: Remove site navigation (not content navigation)
+  // Phase 3: Remove site navigation (not content navigation)
+  currentSize = root.innerHTML.length;
   for (const nav of Array.from(root.querySelectorAll('nav'))) {
     const label = (nav.getAttribute('aria-label') || '').toLowerCase();
     if (!['page', 'content', 'article', 'section'].some(k => label.includes(k))) nav.remove();
   }
+  logPhase('3-removeNav', currentSize, root);
 
-  // Phase 5: Heuristic noise detection (high link density = navigation)
+  // Phase 4: Heuristic noise detection (high link density = navigation)
+  currentSize = root.innerHTML.length;
   for (const el of Array.from(root.querySelectorAll('div, aside, ul, nav'))) {
     if (el.innerHTML.length < CONFIG.noiseSizeThreshold) continue;
     if (el.querySelector('main, article, video, form, input, textarea, [data-vish-id]')) continue;
@@ -469,11 +520,10 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
     const linkTextLen = Array.from(links).reduce((s, a) => s + (a.textContent?.length || 0), 0);
     if (textLen > 0 && linkTextLen / textLen > CONFIG.maxLinkDensity) el.remove();
   }
+  logPhase('4-heuristicNoise', currentSize, root);
 
-  // Phase 6: Unwrap framework wrappers
-  unwrapTags(root, UNWRAP_TAGS);
-
-  // Phase 7: Clean attributes and handle URLs
+  // Phase 5: Clean attributes and handle URLs
+  currentSize = root.innerHTML.length;
   const allElements = root.getElementsByTagName('*');
   const elementCount = allElements.length;
 
@@ -511,8 +561,10 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
       }
     }
   }
+  logPhase('5-cleanAttrs+Hidden', currentSize, root);
 
-  // Phase 8: Remove empty elements
+  // Phase 6: Remove empty elements
+  currentSize = root.innerHTML.length;
   const removeEmpty = (el: Element) => {
     Array.from(el.children).forEach(removeEmpty);
     if (REMOVE_IF_EMPTY.has(el.tagName.toLowerCase()) &&
@@ -522,11 +574,10 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
     }
   };
   removeEmpty(root);
+  logPhase('6-removeEmpty', currentSize, root);
 
-  // Phase 9: Unwrap remaining custom elements
-  unwrapCustomElements(root);
-
-  // Phase 10: Truncate long lists
+  // Phase 7: Truncate long lists
+  currentSize = root.innerHTML.length;
   for (const list of Array.from(root.querySelectorAll('ul, ol'))) {
     const items = list.querySelectorAll(':scope > li');
     if (items.length > CONFIG.maxListItems) {
@@ -536,8 +587,10 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
       list.appendChild(li);
     }
   }
+  logPhase('7-truncateLists', currentSize, root);
 
-  // Phase 11: Truncate long tables
+  // Phase 8: Truncate long tables
+  currentSize = root.innerHTML.length;
   for (const table of Array.from(root.querySelectorAll('table'))) {
     const rows = table.querySelectorAll('tr');
     if (rows.length > CONFIG.maxTableRows + 1) {
@@ -549,8 +602,10 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
       (table.querySelector('tbody') || table).appendChild(tr);
     }
   }
+  logPhase('8-truncateTables', currentSize, root);
 
-  // Phase 12: Collapse single-child wrappers
+  // Phase 9: Collapse single-child wrappers
+  currentSize = root.innerHTML.length;
   for (let iter = 0, changed = true; changed && iter < CONFIG.maxCollapseIterations; iter++) {
     changed = false;
     for (const el of Array.from(root.querySelectorAll('div, span'))) {
@@ -562,24 +617,70 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
       }
     }
   }
+  logPhase('9-collapseWrappers', currentSize, root);
 
-  // Phase 13: Collapse whitespace in text nodes
+  // Phase 10: Collapse whitespace in text nodes
+  currentSize = root.innerHTML.length;
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     walker.currentNode.textContent = walker.currentNode.textContent?.replace(/\s+/g, ' ') || '';
   }
+  logPhase('10-collapseWhitespace', currentSize, root);
+
+  // ========== STRUCTURAL PHASES (truncation uses hierarchy, then flatten) ==========
+
+  // Phase 11: Hierarchical budget-based truncation (hierarchy still intact)
+  // Uses element tree structure to allocate budget: parents get more than children
+  currentSize = root.innerHTML.length;
+  truncateDOM(root, doc, debug);
+  logPhase('11-truncateDOM', currentSize, root);
+
+  // Phase 12: Unwrap framework wrappers (specific known tags)
+  currentSize = root.innerHTML.length;
+  unwrapTags(root, UNWRAP_TAGS);
+  logPhase('12-unwrapTags', currentSize, root);
+
+  // Phase 13: Unwrap all remaining custom elements (flattens hierarchy)
+  currentSize = root.innerHTML.length;
+  unwrapCustomElements(root);
+  logPhase('13-unwrapCustom', currentSize, root);
 
   // Finalize
   const cleanedHtml = collapseWhitespace(root.innerHTML);
   const byteSize = new TextEncoder().encode(cleanedHtml).length;
   const registry = Object.keys(urlRegistry).length ? urlRegistry : undefined;
 
-  if (byteSize > maxHtmlBytes) {
-    const text = root.textContent?.replace(/\s+/g, ' ').trim() || '';
-    return { mode: 'text', content: text, byteSize: new TextEncoder().encode(text).length, elementCount, urlRegistry: registry };
+  if (debug) {
+    debugLog.push({
+      phase: '14-final',
+      sizeBefore: root.innerHTML.length,
+      sizeAfter: byteSize,
+      reduction: root.innerHTML.length - byteSize,
+      reductionPct: `${(((root.innerHTML.length - byteSize) / root.innerHTML.length) * 100).toFixed(1)}%`,
+      elementCount: root.querySelectorAll('*').length
+    });
   }
 
-  return { mode: 'html', content: cleanedHtml, byteSize, elementCount, urlRegistry: registry };
+  if (byteSize > maxHtmlBytes) {
+    const text = root.textContent?.replace(/\s+/g, ' ').trim() || '';
+    return {
+      mode: 'text',
+      content: text,
+      byteSize: new TextEncoder().encode(text).length,
+      elementCount,
+      urlRegistry: registry,
+      debugLog: debug ? debugLog : undefined
+    };
+  }
+
+  return {
+    mode: 'html',
+    content: cleanedHtml,
+    byteSize,
+    elementCount,
+    urlRegistry: registry,
+    debugLog: debug ? debugLog : undefined
+  };
 }
 
 // ============================================================================

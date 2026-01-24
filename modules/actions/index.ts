@@ -6,7 +6,6 @@ import { browserActions, browserActionRouter } from './browser-actions.js';
 import { finalResponseAction } from './final-response-action.js';
 import { llmAction } from './llm-action.js';
 import { routerAction } from './router-action.js';
-import { cleanContentAction } from './clean-content-action.js';
 import { critiqueAction } from './critique-action.js';
 import { knowledgeBaseActions } from './knowledge-base-action.js';
 import { clarificationActions } from './clarification-actions.js';
@@ -18,7 +17,6 @@ export { FINAL_RESPONSE } from './final-response-action.js';
 export { LLM_TOOL } from './llm-action.js';
 export { BROWSER_ROUTER } from './router-action.js';
 export { BROWSER_ACTION } from './browser-actions.js';
-export { CLEAN_CONTENT } from './clean-content-action.js';
 export { CRITIQUE } from './critique-action.js';
 export { RIDDLER, ANSWERER, CHECKER, ADAPTAR, KNOWLEDGE_BASE_ADAPTOR } from './knowledge-base-action.js';
 export { USER_CLARIFICATION } from './clarification-actions.js';
@@ -35,7 +33,6 @@ const allActions: Action[] = [
   llmAction,
   routerAction,
   browserActionRouter,
-  cleanContentAction,
   critiqueAction,
   ...knowledgeBaseActions,
   ...clarificationActions,

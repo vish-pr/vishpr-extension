@@ -1,5 +1,6 @@
 // Content Script - runs on all web pages
 import { ContentAction } from './modules/content-actions.js';
+import { cleanDOM } from './modules/utils/clean-dom.js';
 
 const isMac = navigator.platform.toLowerCase().includes('mac');
 
@@ -31,25 +32,6 @@ function cleanField(value, maxLen = 30) {
   return cleaned.length > maxLen ? cleaned.substring(0, maxLen) : cleaned;
 }
 
-// Clean document by removing non-content elements
-function cleanDocument() {
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = document.body.innerHTML;
-
-  // Remove non-content elements
-  ['script', 'style', 'svg', 'noscript'].forEach(tagName => {
-    const elements = tempDiv.getElementsByTagName(tagName);
-    while (elements.length > 0) {
-      elements[0].parentNode?.removeChild(elements[0]);
-    }
-  });
-
-  // Strip HTML tags and collapse whitespace
-  return tempDiv.innerHTML
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 // Extract and deduplicate links
 function extractLinks(elementIdCounter) {
@@ -179,13 +161,22 @@ function extractPageContent() {
   const selects = extractSelects(elementIdCounter);
   const textareas = extractTextareas(elementIdCounter);
 
+  // Get raw HTML (with data-vish-id attrs now assigned)
+  const rawHtml = document.body?.innerHTML || '';
+
+  // Clean HTML in content script where DOMParser is available
+  const cleaned = cleanDOM(rawHtml, { maxHtmlBytes: 50000, debug: true });
+
   return {
     title: document.title,
     url: window.location.href,
-    // Raw HTML for structural mode (includes data-vish-id attrs)
-    html: document.body?.innerHTML || '',
-    // Text fallback for large pages
-    text: cleanDocument(),
+    // Cleaned content from cleanDOM
+    content: cleaned.content,
+    contentMode: cleaned.mode,
+    byteSize: cleaned.byteSize,
+    rawHtmlSize: rawHtml.length,
+    debugLog: cleaned.debugLog,
+    // Interactive elements
     links,
     buttons,
     inputs,

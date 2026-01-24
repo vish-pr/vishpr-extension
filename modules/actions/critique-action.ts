@@ -117,10 +117,6 @@ Look for:
 - Summary should be 1-2 sentences assessing overall execution quality
 - Empty arrays for categories with no issues found`;
 
-interface CritiqueContext extends StepContext {
-  trace: unknown;
-}
-
 export const critiqueAction: Action = {
   name: CRITIQUE,
   description: 'Analyzes execution traces for improvements in prompts, efficiency, and error handling',
@@ -140,7 +136,7 @@ export const critiqueAction: Action = {
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
-        const trace = (ctx as CritiqueContext).trace;
+        const trace = ctx.trace;
         const summarized = summarize(trace, {
           maxStringLength: 1000,
           maxArrayLength: 20,
