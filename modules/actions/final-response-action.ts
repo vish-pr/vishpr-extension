@@ -77,17 +77,18 @@ const DECISION_OUTPUT_SCHEMA: JSONSchema = {
   properties: {
     final_answer: {
       type: 'string',
-      description: 'Direct answer if last tool result already answers the query'
+      description: 'Direct answer if last tool result already answers the query (empty string if using extraction_prompt)'
     },
     method: {
       type: 'string',
-      description: 'Brief description of steps taken (required with final_answer)'
+      description: 'Brief description of steps taken (empty string if using extraction_prompt)'
     },
     extraction_prompt: {
       type: 'string',
-      description: 'System prompt for extraction if analysis is needed'
+      description: 'System prompt for extraction if analysis is needed (empty string if using final_answer)'
     }
   },
+  required: ['final_answer', 'method', 'extraction_prompt'],
   additionalProperties: false
 };
 
@@ -166,8 +167,8 @@ Purpose:
 {{{messages_history}}}
 </messages>
 
-If last result answers the query → final_answer + method.
-If synthesis/formatting needed → extraction_prompt only.
+If last result answers the query → final_answer + method, extraction_prompt = "".
+If synthesis/formatting needed → extraction_prompt only, final_answer = "", method = "".
 Prefer final_answer to avoid extra LLM call.`,
       intelligence: 'LOW',
       output_schema: DECISION_OUTPUT_SCHEMA

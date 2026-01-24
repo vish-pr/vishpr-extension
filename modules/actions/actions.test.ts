@@ -64,6 +64,11 @@ for (const [name, action] of Object.entries(actionsRegistry) as [string, Action]
       // Must have exactly one of output_schema or tool_choice
       assert(hasSchema !== hasChoice, `${id}: must have exactly one of output_schema or tool_choice`);
 
+      // LOW intelligence models must use output_schema, not tool_choice
+      if (llmStep.intelligence === 'LOW') {
+        assert(hasSchema, `${id}: LOW intelligence must use output_schema, not tool_choice`);
+      }
+
       // Validate template variables (only if no function step preceded)
       if (!hasFunctionStep) {
         const stepVars = new Set([...Array.from(availableVars), ...getKnownContextVars(), ...(hasChoice ? ['decisionGuide', 'stop_action'] : [])]);

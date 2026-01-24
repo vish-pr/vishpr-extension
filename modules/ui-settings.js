@@ -165,29 +165,69 @@ function createStatsCard(modelId, stats) {
   return el;
 }
 
+function isProviderKey(key) {
+  return key.startsWith('provider:');
+}
+
+function getProviderName(providerKey) {
+  return providerKey.replace('provider:', '');
+}
+
+function createProviderStatsCard(provider, stats) {
+  const { rate, total, success, error } = getSuccessRate(stats);
+  const el = document.createElement('div');
+  el.className = 'provider-stat-card bg-base-300/60 rounded-lg p-2.5 border border-base-content/10';
+  el.innerHTML = `
+    <div class="flex items-center gap-2">
+      <div class="radial-progress text-xs font-mono shrink-0 ${getColorClass(rate)}" style="--size:2.5rem; --thickness:3px; --value:${rate};" role="progressbar">
+        <span class="text-[10px] font-semibold">${rate}%</span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-mono text-xs truncate font-medium">${provider}</div>
+        <div class="flex gap-2 mt-0.5">
+          <span class="text-[10px] text-success">${success} ok</span>
+          <span class="text-[10px] text-error">${error} err</span>
+          <span class="text-[10px] opacity-50">${total} total</span>
+        </div>
+      </div>
+    </div>
+  `;
+  el.querySelector('.radial-progress').style.color = getProgressColor(rate);
+  return el;
+}
+
 async function renderModelStats() {
   const counter = getModelStatsCounter();
   const allStats = await counter.getAllStats();
   const container = elements.modelStatsContainer;
   container.innerHTML = '';
 
-  // Filter to models used in the last week
+  // Filter to entries used in the last week, separate providers from models
   const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const models = Object.keys(allStats).filter(m => (allStats[m]._lastActivity || 0) >= oneWeekAgo);
+  const allKeys = Object.keys(allStats).filter(k => (allStats[k]._lastActivity || 0) >= oneWeekAgo);
+  const providers = allKeys.filter(isProviderKey);
+  const models = allKeys.filter(k => !isProviderKey(k));
 
-  if (!models.length) {
+  if (!models.length && !providers.length) {
     container.innerHTML = '<div class="text-center py-8 opacity-50"><svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg><p class="text-xs">No model stats yet</p><p class="text-[10px] opacity-60 mt-1">Stats appear after models are used</p></div>';
     return;
   }
 
-  // Sort by total usage (descending)
+  // Sort providers by total usage
+  providers.sort((a, b) => {
+    const totalA = (allStats[a].success?.total || 0) + (allStats[a].error?.total || 0);
+    const totalB = (allStats[b].success?.total || 0) + (allStats[b].error?.total || 0);
+    return totalB - totalA;
+  });
+
+  // Sort models by total usage (descending)
   models.sort((a, b) => {
     const totalA = (allStats[a].success?.total || 0) + (allStats[a].error?.total || 0);
     const totalB = (allStats[b].success?.total || 0) + (allStats[b].error?.total || 0);
     return totalB - totalA;
   });
 
-  // Calculate totals
+  // Calculate totals from models (not providers to avoid double counting)
   let totalSuccess = 0, totalError = 0;
   models.forEach(m => {
     totalSuccess += allStats[m].success?.total || 0;
@@ -206,11 +246,28 @@ async function renderModelStats() {
   summary.querySelector('.summary-err').textContent = `${totalError} err`;
   container.appendChild(summary);
 
-  // Render cards
-  const grid = document.createElement('div');
-  grid.className = 'grid gap-2';
-  models.forEach(m => grid.appendChild(createStatsCard(m, allStats[m])));
-  container.appendChild(grid);
+  // Render provider stats section
+  if (providers.length) {
+    const providerSection = document.createElement('div');
+    providerSection.className = 'mb-3';
+    providerSection.innerHTML = '<div class="text-[10px] uppercase tracking-wide opacity-40 mb-1.5 font-medium">By Provider</div>';
+    const providerGrid = document.createElement('div');
+    providerGrid.className = 'grid gap-1.5';
+    providers.forEach(p => providerGrid.appendChild(createProviderStatsCard(getProviderName(p), allStats[p])));
+    providerSection.appendChild(providerGrid);
+    container.appendChild(providerSection);
+  }
+
+  // Render model stats section
+  if (models.length) {
+    const modelSection = document.createElement('div');
+    modelSection.innerHTML = '<div class="text-[10px] uppercase tracking-wide opacity-40 mb-1.5 font-medium">By Model</div>';
+    const modelGrid = document.createElement('div');
+    modelGrid.className = 'grid gap-2';
+    models.forEach(m => modelGrid.appendChild(createStatsCard(m, allStats[m])));
+    modelSection.appendChild(modelGrid);
+    container.appendChild(modelSection);
+  }
 }
 
 // Action Stats Rendering - Generic hierarchical display

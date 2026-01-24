@@ -330,6 +330,14 @@ class ChromeAPI {
       await chrome.tabs.get(tabId);
     } catch { throw new Error('Tab no longer exists'); }
 
+    // Switch to target tab if not active - ensures activeTab permission applies
+    if (tabId !== this.currentTabId) {
+      await chrome.tabs.update(tabId, { active: true });
+      this.currentTabId = tabId;
+      // Brief wait for tab activation
+      await new Promise(r => setTimeout(r, 50));
+    }
+
     const urlBefore = await getTabUrl(tabId);
 
     // Check for restricted URLs first

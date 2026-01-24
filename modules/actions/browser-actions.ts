@@ -8,65 +8,53 @@ import { FINAL_RESPONSE } from './final-response-action.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
 // Schema for LLM content cleaning output
-const ELEMENT_SCHEMA: JSONSchema = {
-  type: 'object',
-  properties: { id: { type: 'string' }, text: { type: 'string' } },
-  required: ['id', 'text'],
-  additionalProperties: false
-};
-
 const CLEAN_OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
   properties: {
-    content: { type: 'string', description: 'Cleaned main content, noise removed' },
-    links: { type: 'array', items: ELEMENT_SCHEMA, description: 'Relevant links (max 30)' },
-    buttons: { type: 'array', items: ELEMENT_SCHEMA, description: 'Action buttons (max 15)' },
-    inputs: { type: 'array', items: ELEMENT_SCHEMA, description: 'Form fields (max 15)' },
-    summary: { type: 'string', description: '5-line summary of page content and purpose' }
+    html: { type: 'string', description: 'Cleaned HTML preserving structure. Remove redundancy, keep meaning.' },
+    summary: { type: 'string', description: '3-line summary: purpose, main content, key actions' }
   },
-  required: ['content', 'links', 'buttons', 'inputs', 'summary'],
+  required: ['html', 'summary'],
   additionalProperties: false
 };
 
-const CLEAN_SYSTEM_PROMPT = `You distill webpage content for an AI agent that needs to understand and interact with the page.
+const CLEAN_SYSTEM_PROMPT = `You are an HTML cleaner for a browser automation agent. You remove noise while preserving structure and meaning.
 
-# Critical Rules
-MUST: Preserve content the agent might need to complete tasks.
-MUST: Keep all interactive elements that could be relevant.
-MUST: Follow limits (links≤30, buttons≤15, inputs≤15).
-MUST: Produce exactly 5-line summary.
+# Rules
 
-# What to REMOVE (only clear noise)
+MUST preserve:
+- Semantic HTML (headings, lists, tables, articles, sections)
+- All text that conveys information
+- Interactive elements with data-vish-id (agent uses these IDs to click/fill)
+- State attributes (aria-*, data-state, checked, selected)
 
-| Category | Examples |
-|----------|----------|
-| Exact duplicates | Same link/button with identical text appearing multiple times |
-| Tracking/hidden | Tracking inputs, honeypots, display:none elements |
-| Boilerplate | Cookie banners, "Accept all" popups |
+MUST remove:
+- Exact duplicate text (same phrase appearing multiple times)
+- Boilerplate (cookie banners, "Accept all", copyright notices)
+- Empty elements with no content
+- Filler text ("Loading...", "Please wait", placeholders)
 
-# What to KEEP (err on side of keeping)
+NEVER:
+- Summarize content - output is cleaned HTML, not a summary
+- Remove elements with data-vish-id (agent needs these for interaction)
+- Change the document structure or hierarchy
 
-| Category | Examples |
-|----------|----------|
-| Main content | Article text, product info, search results, tables, lists |
-| ALL buttons | Any button the user might want to click |
-| ALL form fields | Any input, select, textarea the user might fill |
-| Navigation | Site navigation, category links, pagination |
-| Sidebar content | Related items, filters, categories |
-| Footer links | Contact, help, sitemap (often useful) |
+# Output
 
-# Output Field Limits
-- content: Main content (preserve structure with newlines)
-- links: Up to 30 relevant links
-- buttons: Up to 15 buttons
-- inputs: Up to 15 form fields
+| Field | Description |
+|-------|-------------|
+| html | Cleaned HTML. Full content, less noise. Links/buttons/inputs are inline with data-vish-id. |
+| summary | 3 lines: purpose, main content, key actions |
 
-# Summary Format (exactly 5 lines)
-1. Purpose: <what this page is for>
-2. Main content: <brief description or "None">
-3. Primary actions: <key buttons or "None">
-4. Navigation: <main navigation options or "None">
-5. Forms: <form fields available or "None">`;
+# Examples
+
+Input: <div><p>Welcome</p><p>Welcome</p><p>Click here to continue</p></div>
+Output html: <div><p>Welcome</p><p>Click here to continue</p></div>
+Why: Removed exact duplicate "Welcome"
+
+Input: <div class="cookie">Accept cookies</div><article>Real content</article>
+Output html: <article>Real content</article>
+Why: Removed cookie banner boilerplate`;
 
 /**
  * Compress previous READ_PAGE results in messages
@@ -86,7 +74,7 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
     }
 
     // Skip if not a READ_PAGE result or already compressed
-    if (!content._summary || content._compressed) return msg;
+    if (!content.summary || content._compressed) return msg;
 
     // Replace with compressed version
     return {
@@ -95,7 +83,7 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
         tabId: content.tabId,
         url: content.url,
         _compressed: true,
-        summary: content._summary
+        summary: content.summary
       })
     };
   });
@@ -138,9 +126,9 @@ export const READ_PAGE: Action = {
         // Log mode and stats
         if (raw.contentMode === 'text') {
           const debugInfo = raw.debugLog?.length
-            ? raw.debugLog.slice(-3).map((p: { phase: string; sizeAfter: number }) => `${p.phase}:${p.sizeAfter}`).join(',')
+            ? raw.debugLog.map((p: { phase: string; sizeAfter: number }) => `${p.phase}:${p.sizeAfter}`).join(', ')
             : 'no-debug';
-          console.warn(`[READ_PAGE] text fallback | raw=${raw.rawHtmlSize} final=${raw.byteSize} phases=${raw.debugLog?.length ?? 0} | last3=[${debugInfo}] | ${raw.url}`);
+          console.warn(`[READ_PAGE] text fallback | raw=${raw.rawHtmlSize} final=${raw.byteSize} | ${raw.url}\n  phases: ${debugInfo}`);
         } else {
           console.log(`[READ_PAGE] html mode | raw=${raw.rawHtmlSize} cleaned=${raw.byteSize} | ${raw.url}`);
         }
@@ -149,39 +137,27 @@ export const READ_PAGE: Action = {
         const stats = getActionStatsCounter();
         stats.increment('READ_PAGE', raw.contentMode === 'html' ? 'html_mode' : 'text_fallback').catch(() => {});
 
-        // Merge all form inputs for LLM
-        const allInputs = [...raw.inputs, ...raw.selects, ...raw.textareas];
-
         return {
           result: {
             url: raw.url,
             title: raw.title,
             contentMode: raw.contentMode,
-            content: raw.content,
-            linksJson: JSON.stringify(raw.links, null, 2),
-            buttonsJson: JSON.stringify(raw.buttons, null, 2),
-            inputsJson: JSON.stringify(allInputs, null, 2)
+            content: raw.content
           }
         };
       }
     },
-    // Step 2: LLM cleans and summarizes content
+    // Step 2: LLM cleans HTML (removes redundancy, preserves structure)
     {
       type: 'llm',
       system_prompt: CLEAN_SYSTEM_PROMPT,
-      message: `Distill this webpage for an AI agent.
+      message: `Clean this HTML. Remove redundancy, preserve structure and meaning.
 
 Title: {{{title}}}
-Content: {{{content}}}
-Links: {{{linksJson}}}
-Buttons: {{{buttonsJson}}}
-Inputs: {{{inputsJson}}}
+HTML: {{{content}}}
 
-Keep content the agent needs to understand and interact with the page.
-Extract: main content, up to 30 links, up to 15 buttons, up to 15 inputs.
-Remove only exact duplicates and tracking elements. Err on side of keeping.
-Produce exactly 5-line summary.`,
-      intelligence: 'LOW',
+Output cleaned HTML. Interactive elements have data-vish-id inline.`,
+      intelligence: 'MEDIUM',
       output_schema: CLEAN_OUTPUT_SCHEMA
     },
     // Step 3: Format final result
@@ -191,7 +167,7 @@ Produce exactly 5-line summary.`,
         const chrome = getChromeAPI();
 
         chrome.updateTabContent(ctx.tabId, {
-          raw: { title: ctx.title, content: ctx.content, links: ctx.links, buttons: ctx.buttons, inputs: ctx.inputs },
+          raw: { title: ctx.title, html: ctx.html },
           summary: ctx.summary
         });
 
@@ -200,10 +176,7 @@ Produce exactly 5-line summary.`,
           url: ctx.url,
           title: ctx.title,
           summary: ctx.summary,
-          content: ctx.content,
-          links: ctx.links,
-          buttons: ctx.buttons,
-          inputs: ctx.inputs
+          html: ctx.html
         };
 
         const updatedParentMessages = compressPreviousReads(ctx.parent_messages);

@@ -127,6 +127,11 @@ export function modelStatsKey(endpoint, model, openrouterProvider) {
   return `${endpoint}:${model}:${openrouterProvider || ''}`;
 }
 
+export function providerStatsKey(endpoint) {
+  // Extract just the provider (e.g., "openrouter" from "openrouter:qwen")
+  return `provider:${endpoint.split(':')[0]}`;
+}
+
 export function getModelStatsCounter() {
   return modelStatsCounter ??= new TimeBucketCounter('modelStatsV2', {
     get: keys => chrome.storage.local.get(keys),

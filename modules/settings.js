@@ -89,6 +89,11 @@ function createEndpointEditingRow(id = '', config = {}) {
   const typeSelect = el.querySelector('.endpoint-type-select'), nameInput = el.querySelector('.endpoint-name-input');
   const urlInput = el.querySelector('.endpoint-url-input'), keyInput = el.querySelector('.endpoint-key-input');
 
+  // Populate dropdown from PREDEFINED_ENDPOINTS
+  for (const [endpointId, endpoint] of Object.entries(PREDEFINED_ENDPOINTS)) {
+    typeSelect.appendChild(Object.assign(document.createElement('option'), { value: endpointId, textContent: endpoint.name }));
+  }
+
   if (id && PREDEFINED_ENDPOINTS[id]) {
     typeSelect.value = id; urlInput.value = PREDEFINED_ENDPOINTS[id].url;
     urlInput.readOnly = true; urlInput.classList.add('opacity-50');
@@ -210,12 +215,15 @@ async function verifyAllModels() {
   // Second pass: start verification tasks
   for (const tier of TIERS) {
     for (let i = 0; i < (currentModels[tier]?.length || 0); i++) {
-      const [ep, m, prov, noTool] = currentModels[tier][i], key = `${tier}:${i}`;
+      const [ep, m, prov, noTool, noToolUse] = currentModels[tier][i], key = `${tier}:${i}`;
       const status = verificationStatus.get(key);
       if (!m || !status?.verifying) continue;
       tasks.push(verifyModel(ep, m, prov).then(async result => {
         verificationStatus.set(key, { verified: result.valid, error: result.error });
-        if (result.noToolChoice && !noTool) { currentModels[tier][i] = [ep, m, prov, true]; needsSave = true; }
+        if ((result.noToolChoice && !noTool) || (result.noToolUse && !noToolUse)) {
+          currentModels[tier][i] = [ep, m, prov, result.noToolChoice || noTool, result.noToolUse || noToolUse];
+          needsSave = true;
+        }
         await counter.increment(modelStatsKey(ep, m, prov), result.valid ? 'success' : 'error');
         renderTierModels(tier);
       }));
@@ -225,7 +233,7 @@ async function verifyAllModels() {
   if (needsSave) saveModels();
 }
 
-function createModelItem(endpoint, model, openrouterProvider, noToolChoice, tier, index, stats) {
+function createModelItem(endpoint, model, openrouterProvider, noToolChoice, noToolUse, tier, index, stats) {
   const el = tpl('tpl-model-item');
   el.dataset.tier = tier; el.dataset.index = index;
   el.querySelector('.model-endpoint').textContent = endpoint;
@@ -239,10 +247,11 @@ function createModelItem(endpoint, model, openrouterProvider, noToolChoice, tier
   else if (status?.verifying) statusEl.innerHTML = '<div class="tooltip tooltip-right" data-tip="Verifying..."><div class="status status-verifying"></div></div>';
   else statusEl.innerHTML = '<div class="status status-idle"></div>';
 
-  if (noToolChoice) {
+  const warningTip = noToolUse ? 'Schema output only (no tool use)' : noToolChoice ? 'No tool_choice support' : null;
+  if (warningTip) {
     const warningEl = el.querySelector('.warning-indicator');
     warningEl.classList.remove('hidden');
-    warningEl.innerHTML = '<div class="tooltip tooltip-bottom tooltip-warning" data-tip="No tool_choice support"><svg class="w-3 h-3 text-warning" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L1 21h22L12 2zm0 4l7.5 13h-15L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z"/></svg></div>';
+    warningEl.innerHTML = `<div class="tooltip tooltip-bottom tooltip-warning" data-tip="${warningTip}"><svg class="w-3 h-3 text-warning" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L1 21h22L12 2zm0 4l7.5 13h-15L12 6zm-1 5v4h2v-4h-2zm0 6v2h2v-2h-2z"/></svg></div>`;
   }
 
   if (stats) {
@@ -325,7 +334,7 @@ async function renderTierModels(tier) {
   listEl.innerHTML = '';
   if (!models.length) { listEl.innerHTML = '<li class="text-center text-xs opacity-50 py-4">No models configured</li>'; return; }
   const stats = await getModelStatsCounter().getAllStats();
-  models.forEach(([ep, m, prov, noTool], i) => listEl.appendChild(createModelItem(ep, m, prov, noTool, tier, i, stats[modelStatsKey(ep, m, prov)])));
+  models.forEach(([ep, m, prov, noTool, noToolUse], i) => listEl.appendChild(createModelItem(ep, m, prov, noTool, noToolUse, tier, i, stats[modelStatsKey(ep, m, prov)])));
 }
 
 const renderAllModels = () => Promise.all(TIERS.map(renderTierModels));
@@ -371,12 +380,13 @@ async function handleModelSave(tier, index) {
   saveBtn.disabled = false; saveBtn.innerHTML = originalHtml;
 
   verificationStatus.set(`${tier}:${index}`, { verified: result.valid, error: result.error });
-  currentModels[tier][index] = [endpoint, model, openrouterProvider, result.noToolChoice || undefined];
+  currentModels[tier][index] = [endpoint, model, openrouterProvider, result.noToolChoice || undefined, result.noToolUse || undefined];
   saveModels(); renderTierModels(tier);
 
-  addMessage('system', result.valid
-    ? (result.noToolChoice ? '✓ Model verified (no tool_choice support)' : '✓ Model verified and saved')
-    : `✗ Model verification failed: ${result.error}`);
+  const statusMsg = result.noToolUse ? '✓ Model verified (schema output only, no tool use)'
+    : result.noToolChoice ? '✓ Model verified (no tool_choice support)'
+    : '✓ Model verified and saved';
+  addMessage('system', result.valid ? statusMsg : `✗ Model verification failed: ${result.error}`);
 }
 
 function handleModelDelete(tier, index) {
@@ -388,12 +398,12 @@ function handleModelDelete(tier, index) {
 
 async function handleModelAdd(tier) {
   const listEl = getListEl(tier), defaultEndpoint = Object.keys(currentEndpoints)[0] || '';
-  currentModels[tier].push([defaultEndpoint, '', null, undefined]);
+  currentModels[tier].push([defaultEndpoint, '', null, undefined, undefined]);
   const index = currentModels[tier].length - 1;
 
   listEl.innerHTML = '';
   const stats = await getModelStatsCounter().getAllStats();
-  currentModels[tier].slice(0, -1).forEach(([ep, m, prov, noTool], i) => listEl.appendChild(createModelItem(ep, m, prov, noTool, tier, i, stats[modelStatsKey(ep, m, prov)])));
+  currentModels[tier].slice(0, -1).forEach(([ep, m, prov, noTool, noToolUse], i) => listEl.appendChild(createModelItem(ep, m, prov, noTool, noToolUse, tier, i, stats[modelStatsKey(ep, m, prov)])));
   listEl.appendChild(await createModelEditingRow(defaultEndpoint, '', null, tier, index));
   listEl.querySelector('.list-row:last-child .model-name-input').focus();
 }

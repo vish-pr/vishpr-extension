@@ -3,12 +3,13 @@
  */
 
 import logger from '../logger.js';
-import { getModelStatsCounter, modelStatsKey } from '../debug/time-bucket-counter.js';
+import { getModelStatsCounter, modelStatsKey, providerStatsKey } from '../debug/time-bucket-counter.js';
 import { OPENROUTER_ID } from './endpoints.js';
 
-// Model tuple: [endpoint, model, openrouterProvider, noToolChoice]
+// Model tuple: [endpoint, model, openrouterProvider, noToolChoice, noToolUse]
 // openrouterProvider: provider slug for OpenRouter routing (e.g., 'google-ai-studio')
 // noToolChoice: boolean - skip tool_choice param for models that don't support it
+// noToolUse: boolean - model doesn't support tool use at all (skipped when tools required)
 export const DEFAULT_MODELS = {
   HIGH: [
     [OPENROUTER_ID, 'google/gemini-2.5-pro', 'google-ai-studio'],
@@ -45,8 +46,8 @@ export async function getCascadingModels(intelligence) {
 
   return INTELLIGENCE_LEVELS
     .slice(startIndex)
-    .flatMap(level => (models[level] || []).map(([endpoint, model, openrouterProvider, noToolChoice]) => ({
-      endpoint, model, openrouterProvider, noToolChoice
+    .flatMap(level => (models[level] || []).map(([endpoint, model, openrouterProvider, noToolChoice, noToolUse]) => ({
+      endpoint, model, openrouterProvider, noToolChoice, noToolUse
     })));
 }
 
@@ -66,15 +67,21 @@ export async function shouldSkip(endpoint, model, openrouterProvider) {
 }
 
 export async function recordSuccess(endpoint, model, openrouterProvider) {
+  const counter = getModelStatsCounter();
   const key = modelStatsKey(endpoint, model, openrouterProvider);
-  await getModelStatsCounter().reset(key, ['error', 'skip']);
-  await getModelStatsCounter().increment(key, 'success');
+  const provKey = providerStatsKey(endpoint);
+  await counter.reset(key, ['error', 'skip']);
+  await counter.increment(key, 'success');
+  await counter.increment(provKey, 'success');
 }
 
 export async function recordError(endpoint, model, openrouterProvider) {
+  const counter = getModelStatsCounter();
   const key = modelStatsKey(endpoint, model, openrouterProvider);
-  await getModelStatsCounter().increment(key, 'error');
-  await getModelStatsCounter().reset(key, ['skip']);
+  const provKey = providerStatsKey(endpoint);
+  await counter.increment(key, 'error');
+  await counter.reset(key, ['skip']);
+  await counter.increment(provKey, 'error');
 }
 
 export async function getAllModelsSortedByRecentErrors() {
@@ -82,8 +89,8 @@ export async function getAllModelsSortedByRecentErrors() {
   const allModels = [];
 
   for (const level of ['HIGH', 'MEDIUM', 'LOW']) {
-    for (const [endpoint, model, openrouterProvider, noToolChoice] of (models[level] || [])) {
-      allModels.push({ endpoint, model, openrouterProvider, noToolChoice });
+    for (const [endpoint, model, openrouterProvider, noToolChoice, noToolUse] of (models[level] || [])) {
+      allModels.push({ endpoint, model, openrouterProvider, noToolChoice, noToolUse });
     }
   }
 

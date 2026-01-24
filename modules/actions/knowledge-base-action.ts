@@ -22,6 +22,15 @@ const RIDDLER_OUTPUT_SCHEMA: JSONSchema = {
   properties: {
     qa_pairs: {
       type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          answer: { type: 'string' }
+        },
+        required: ['question', 'answer'],
+        additionalProperties: false
+      },
       description: 'List of question-answer pairs generated from the knowledge chunk'
     }
   },
@@ -34,6 +43,7 @@ const ANSWERER_OUTPUT_SCHEMA: JSONSchema = {
   properties: {
     answers: {
       type: 'array',
+      items: { type: 'string' },
       description: 'List of answers to the questions based on existing knowledge'
     }
   },
@@ -46,7 +56,8 @@ const CHECKER_OUTPUT_SCHEMA: JSONSchema = {
   properties: {
     ratings: {
       type: 'array',
-      description: 'List of ratings for each answer'
+      items: { type: 'number' },
+      description: 'List of ratings (0-10) for each answer'
     }
   },
   required: ['ratings'],
@@ -155,6 +166,7 @@ export const answererAction: Action = {
       },
       questions: {
         type: 'array',
+        items: { type: 'string' },
         description: 'List of questions to answer'
       }
     },
@@ -227,6 +239,16 @@ export const checkerAction: Action = {
       },
       comparisons: {
         type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            question: { type: 'string' },
+            correct_answer: { type: 'string' },
+            student_answer: { type: 'string' }
+          },
+          required: ['question', 'correct_answer', 'student_answer'],
+          additionalProperties: false
+        },
         description: 'List of {question, correct_answer, student_answer} to check'
       }
     },
@@ -326,6 +348,7 @@ export const adaptarAction: Action = {
       },
       questions_not_answered: {
         type: 'array',
+        items: { type: 'string' },
         description: 'Questions the existing base could not answer'
       }
     },

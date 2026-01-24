@@ -69,6 +69,13 @@ export async function verifyModel(endpointName, modelId, openrouterProvider = nu
     function: { name: 'test', description: 'Test function', parameters: { type: 'object', properties: {} } }
   }];
 
+  const VERIFY_SCHEMA = {
+    type: 'object',
+    properties: { result: { type: 'string' } },
+    required: ['result'],
+    additionalProperties: false
+  };
+
   try {
     const config = resolveEndpoint(endpointName, endpoints);
 
@@ -112,12 +119,35 @@ export async function verifyModel(endpointName, modelId, openrouterProvider = nu
       if (response.ok) {
         return { valid: true, noToolChoice: true };
       }
-
-      const retryErr = await response.json().catch(() => ({}));
-      return { valid: false, error: retryErr.error?.message || 'Model verification failed' };
     }
 
-    return { valid: false, error: errorMsg };
+    // Tool use failed entirely - verify schema output support
+    const schemaRequest = {
+      model: modelId,
+      messages: [{ role: 'user', content: 'Reply with result: "ok"' }],
+      max_tokens: 500,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'response', strict: true, schema: VERIFY_SCHEMA }
+      }
+    };
+
+    if (openrouterProvider) {
+      schemaRequest.provider = { only: [openrouterProvider] };
+    }
+
+    response = await fetch(config.url, {
+      method: 'POST',
+      headers: config.headers,
+      body: JSON.stringify(schemaRequest)
+    });
+
+    if (response.ok) {
+      return { valid: true, noToolUse: true };
+    }
+
+    const schemaErr = await response.json().catch(() => ({}));
+    return { valid: false, error: schemaErr.error?.message || errorMsg };
   } catch (e) {
     return { valid: false, error: e.message };
   }

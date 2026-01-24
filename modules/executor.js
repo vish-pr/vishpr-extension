@@ -301,8 +301,13 @@ function createTracedGenerate(generateFn, actionUUID, stepIndex, traceWritePromi
     const startTime = performance.now();
     let result, error;
 
+    const onModelError = ({ endpoint, model, openrouterProvider, error: errMsg, phase }) => {
+      const modelName = openrouterProvider ? `${model}@${openrouterProvider}` : `${endpoint}/${model}`;
+      traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, `Model error (${phase}): ${modelName}`, { error: errMsg }));
+    };
+
     try {
-      result = await generateFn(options);
+      result = await generateFn({ ...options, onModelError });
     } catch (err) {
       error = err;
     }

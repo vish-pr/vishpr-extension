@@ -8,6 +8,8 @@ const CACHE_TTL = 5 * 60 * 1000;
 export const OPENROUTER_ID = 'openrouter';
 export const GROQ_ID = 'groq';
 export const GEMINI_ID = 'gemini';
+export const CEREBRAS_ID = 'cerebras';
+export const MISTRAL_ID = 'mistral';
 
 export const PREDEFINED_ENDPOINTS = {
   [OPENROUTER_ID]: {
@@ -25,6 +27,16 @@ export const PREDEFINED_ENDPOINTS = {
     name: 'Gemini',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     modelsUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/models'
+  },
+  [CEREBRAS_ID]: {
+    name: 'Cerebras',
+    url: 'https://api.cerebras.ai/v1/chat/completions',
+    modelsUrl: 'https://api.cerebras.ai/v1/models'
+  },
+  [MISTRAL_ID]: {
+    name: 'Mistral',
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    modelsUrl: 'https://api.mistral.ai/v1/models'
   }
 };
 

@@ -20,18 +20,16 @@ const CONFIG = {
   // Truncation limits
   maxListItems: 10,             // Truncate lists after N items
   maxTableRows: 10,             // Truncate tables after N rows
-  maxAriaLabel: 50,             // Truncate aria-labels at N chars
-  maxAttrValue: 100,            // Truncate other attrs at N chars
+  textAttrLimit: 50,            // Text-like attrs: keep up to 50 chars
+  otherAttrThreshold: 15,       // Other attrs: if > 15 chars, truncate
+  otherAttrKeep: 7,             // Other attrs: keep first 7 chars
   minAltLength: 3,              // Alt text shorter than this = meaningless
   maxCollapseIterations: 5,     // Prevent infinite loops in wrapper collapse
 
-  // Hierarchical budget-based truncation (applied to entire DOM)
-  // importance = text content (without tags), size = HTML size
-  // Budget allocated with linear decay: earlier siblings get more
-  targetSize: 45000,            // Target max HTML size after truncation
-  decayRate: 0.4,               // Linear decay (0.4 = last child gets 60% of first's budget)
-  minBudget: 100,               // Minimum budget per element before removal
-  preserveRatio: 0.3,           // Always preserve at least 30% of children by count
+  // Binary search truncation (slope-based linear taper)
+  // Uses binary search to find minimum slope needed to get under targetSize
+  // keepRatio(i, n, slope) = 1 - slope * (i / (n-1))
+  targetSize: 45000,            // Target max HTML size for truncation
 
   // URL params worth keeping (strip all others)
   keepParams: ['q', 'query', 'search', 's', 'page', 'p', 'id', 'tab', 'v'],
@@ -41,10 +39,43 @@ const CONFIG = {
 // TAG/SELECTOR DEFINITIONS
 // ============================================================================
 
-const KEEP_ATTRS = new Set([
-  'href', 'src', 'alt', 'title', 'type', 'value', 'placeholder',
-  'data-vish-id', 'role', 'aria-label'
+// Blacklist: attributes to remove entirely (noise)
+const REMOVE_ATTRS = new Set([
+  // Styling
+  'class', 'style',
+  // Framework internals
+  'data-reactid', 'data-react-checksum', 'data-emotion-css',
+  // Testing selectors
+  'data-testid', 'data-test', 'data-cy', 'data-qa',
+  // Analytics
+  'data-gtm', 'data-ga', 'data-analytics', 'data-track',
+  // Web component noise
+  'slot', 'part', 'exportparts', 'is',
+  // Misc noise
+  'draggable', 'spellcheck', 'translate', 'autocapitalize', 'autocorrect',
 ]);
+
+const REMOVE_ATTR_PREFIXES = ['on', 'data-react', 'data-v-', 'ng-', 'v-', '_ngcontent', '_nghost'];
+
+// Heuristic: detect if value is natural text vs hash/noise
+// Compare frequency of common English chars vs rare chars + digits
+const COMMON_CHARS = /[etaoinshrl ]/gi;  // Most frequent in English + space
+const RARE_CHARS = /[zqxj0-9]/gi;        // Rare letters + digits (hash indicators)
+
+const isTextLike = (value: string): boolean => {
+  if (value.length < 15) return true;
+
+  const common = (value.match(COMMON_CHARS) || []).length;
+  const rare = (value.match(RARE_CHARS) || []).length;
+
+  return common > 1.1 * rare;
+};
+
+const shouldRemoveAttr = (name: string): boolean => {
+  if (REMOVE_ATTRS.has(name)) return true;
+  if (REMOVE_ATTR_PREFIXES.some(prefix => name.startsWith(prefix))) return true;
+  return false;
+};
 
 const REMOVE_TAGS = new Set([
   'script', 'style', 'noscript', 'svg', 'iframe', 'object', 'embed', 'link', 'meta', 'template',
@@ -101,26 +132,6 @@ const REMOVE_IF_EMPTY = new Set([
 ]);
 
 const GENERIC_ALT = new Set(['image', 'logo', 'icon']);
-
-// Comment container patterns for hierarchical truncation
-// Each entry: [containerSelector, itemSelector, replyContainerSelector?]
-const COMMENT_PATTERNS: Array<{ container: string; item: string; replies?: string }> = [
-  // YouTube
-  { container: 'ytd-comments', item: 'ytd-comment-thread-renderer', replies: 'ytd-comment-replies-renderer' },
-  // Reddit (new design)
-  { container: 'shreddit-comment-tree', item: 'shreddit-comment' },
-  { container: '[data-testid="comments-page"]', item: 'shreddit-comment' },
-  // Reddit (old design)
-  { container: '.commentarea', item: '.comment' },
-  // Hacker News
-  { container: '.comment-tree', item: '.athing.comtr' },
-  // Generic patterns (class/id containing "comment")
-  { container: '[class*="comment-list"], [class*="comments-list"], [id*="comments"]', item: '[class*="comment-item"], [class*="comment-thread"], [class*="comment "]' },
-  // Disqus
-  { container: '#disqus_thread', item: '.post' },
-  // Facebook
-  { container: '[data-testid="UFI2CommentsProvider"]', item: '[data-testid="UFI2Comment"]' },
-];
 
 // ============================================================================
 // TYPES
@@ -218,205 +229,181 @@ const collapseWhitespace = (html: string): string =>
   html.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').replace(/> </g, '><').trim();
 
 // ============================================================================
-// HIERARCHICAL TRUNCATION (DFS with importance-based budgeting)
+// BINARY SEARCH TRUNCATION (recursive slope-based linear taper)
 // ============================================================================
 
 /**
- * Measure actual element size using innerHTML length
- * Previously used text * 1.5 estimate, but this was wildly inaccurate
- * for sites like YouTube with deep nesting and custom elements (32x underestimate)
+ * Measure element size (innerHTML length)
  */
-const measureSize = (element: Element): number => {
-  return element.innerHTML.length;
+const measureSize = (element: Element): number => element.innerHTML.length;
+
+/**
+ * Linear taper: keepRatio = 1 - slope * (i / (n-1))
+ * slope=0: keep all equally, slope=1: first=100%, last=0%
+ */
+const taperRatio = (index: number, total: number, slope: number): number => {
+  if (total <= 1) return 1;
+  return Math.max(0, 1 - slope * (index / (total - 1)));
+};
+
+/** Threshold below which elements are removed */
+const REMOVAL_THRESHOLD = 0.1;
+
+/** Safety margin for binary search (accounts for estimation error) */
+const SAFETY_MARGIN = 0.95;
+
+/**
+ * Build size cache for accurate estimation (outerHTML is expensive)
+ */
+const buildSizeCache = (root: Element): Map<Element, number> => {
+  const cache = new Map<Element, number>();
+  const all = root.querySelectorAll('*');
+  for (const el of all) {
+    cache.set(el, el.outerHTML.length);
+  }
+  cache.set(root, root.outerHTML.length);
+  return cache;
 };
 
 /**
- * Generalized hierarchical truncation using DFS
- * Uses text content as importance metric, actual HTML size for budget
- *
- * @param element - Element to truncate
- * @param budget - Available character budget for this subtree
- * @param doc - Document for creating elements
- * @param depth - Current recursion depth
- * @returns Actual HTML size after truncation
+ * Recursively estimate size with given slope using BINARY decisions
+ * Elements are either kept entirely or removed entirely based on threshold
+ * Uses accurate overhead calculation: outerHTML - sum(children.outerHTML)
  */
-const truncateByBudget = (
+const estimateTreeSize = (
   element: Element,
-  budget: number,
-  doc: Document,
-  depth = 0
+  inheritedRatio: number,
+  slope: number,
+  sizeCache: Map<Element, number>
 ): number => {
-  void depth; // Used only in base case check
-  const maxDepth = 3;
-  const maxChildrenToProcess = 100; // Limit for performance
-  const decayRate = CONFIG.decayRate;
-  const minBudget = CONFIG.minBudget;
+  // Binary decision: if ratio < threshold, element is removed entirely
+  if (inheritedRatio < REMOVAL_THRESHOLD) return 0;
 
-  // Base case: max depth or small enough
-  const estSize = measureSize(element);
-  if (depth >= maxDepth || estSize <= budget) {
-    return estSize;
-  }
-
-  // Get children with content (limit for performance)
-  const allChildren = Array.from(element.children);
-  const children = allChildren.filter(c =>
-    c.textContent?.trim() && !c.hasAttribute('data-truncated')
-  ).slice(0, maxChildrenToProcess * 2); // Pre-filter limit
-
+  const children = Array.from(element.children);
   if (children.length === 0) {
-    return estSize;
+    // Leaf kept entirely
+    return sizeCache.get(element) || element.outerHTML.length;
   }
 
-  // Calculate importance (text length) for each child - fast operation
-  const childData = children.map(child => ({
-    element: child,
-    importance: child.textContent?.length || 0,
-    estSize: measureSize(child)
-  }));
+  // Inner node overhead = outerHTML - sum(children outerHTML)
+  const mySize = sizeCache.get(element) || element.outerHTML.length;
+  const childrenOuterSum = children.reduce(
+    (sum, c) => sum + (sizeCache.get(c) || c.outerHTML.length), 0
+  );
+  const ownOverhead = Math.max(0, mySize - childrenOuterSum);
 
-  const totalImportance = childData.reduce((sum, c) => sum + c.importance, 0);
-  if (totalImportance === 0) return estSize;
-
-  // Calculate weights with linear decay
-  const weights: number[] = [];
-  let totalWeight = 0;
-  for (let i = 0; i < children.length; i++) {
-    const posWeight = 1 - (i / children.length) * decayRate;
-    const impWeight = childData[i].importance / totalImportance;
-    const w = posWeight * 0.6 + impWeight * children.length * 0.4;
-    weights.push(w);
-    totalWeight += w;
+  let childrenSize = 0;
+  const n = children.length;
+  for (let i = 0; i < n; i++) {
+    const childRatio = inheritedRatio * taperRatio(i, n, slope);
+    childrenSize += estimateTreeSize(children[i], childRatio, slope, sizeCache);
   }
 
-  let usedBudget = 0;
-  let truncatedAt = -1;
-
-  for (let i = 0; i < children.length; i++) {
-    const data = childData[i];
-    const itemBudget = Math.floor((budget * weights[i]) / totalWeight);
-    const remaining = budget - usedBudget;
-
-    if (remaining < minBudget) {
-      truncatedAt = i;
-      break;
-    }
-
-    const effectiveBudget = Math.min(itemBudget, remaining);
-
-    if (data.estSize <= effectiveBudget) {
-      usedBudget += data.estSize;
-    } else {
-      // Recursively truncate
-      const used = truncateByBudget(data.element, effectiveBudget, doc, depth + 1);
-      usedBudget += used;
-    }
-  }
-
-  // Remove truncated elements, preserving minimum ratio
-  const minPreserve = Math.max(1, Math.ceil(children.length * CONFIG.preserveRatio));
-  if (truncatedAt >= 0 && truncatedAt < children.length) {
-    const actualCutoff = Math.max(truncatedAt, minPreserve);
-    if (actualCutoff < children.length) {
-      const removedCount = children.length - actualCutoff;
-      const removedText = childData.slice(actualCutoff).reduce((s, c) => s + c.importance, 0);
-
-      for (let i = actualCutoff; i < children.length; i++) {
-        children[i].remove();
-      }
-
-      if (removedCount > 0 && removedText > 100) {
-        const notice = doc.createElement('span');
-        notice.textContent = ` [+${removedCount} more, ~${Math.round(removedText / 1000)}k text]`;
-        notice.setAttribute('data-truncated', String(removedCount));
-        element.appendChild(notice);
-      }
-    }
-  }
-
-  return measureSize(element);
+  return ownOverhead + childrenSize;
 };
 
 /**
- * Fast truncation for very large element lists
- * Simply removes excess items without recursing
+ * Recursively apply slope - remove elements where ratio < threshold
+ * No notices added to avoid size increase from many small removals
  */
-const fastTruncateChildren = (element: Element, keepCount: number, doc: Document) => {
-  const children = Array.from(element.children).filter(c =>
-    c.textContent?.trim() && !c.hasAttribute('data-truncated')
-  );
+const applyTreeSlope = (
+  element: Element,
+  inheritedRatio: number,
+  slope: number
+): void => {
+  const children = Array.from(element.children);
+  const n = children.length;
+  if (n === 0) return;
 
-  if (children.length <= keepCount) return;
+  // Process in reverse to safely remove
+  for (let i = n - 1; i >= 0; i--) {
+    const childRatio = inheritedRatio * taperRatio(i, n, slope);
 
-  const removedCount = children.length - keepCount;
-  const removedText = children.slice(keepCount).reduce(
-    (sum, c) => sum + (c.textContent?.length || 0), 0
-  );
-
-  for (let i = keepCount; i < children.length; i++) {
-    children[i].remove();
-  }
-
-  if (removedCount > 0) {
-    const notice = doc.createElement('span');
-    notice.textContent = ` [+${removedCount} more, ~${Math.round(removedText / 1000)}k text]`;
-    notice.setAttribute('data-truncated', String(removedCount));
-    element.appendChild(notice);
+    if (childRatio < REMOVAL_THRESHOLD) {
+      children[i].remove();
+    } else {
+      // Recurse into surviving children
+      applyTreeSlope(children[i], childRatio, slope);
+    }
   }
 };
 
 /**
- * Apply hierarchical truncation to the entire DOM
- * Uses fast path for very large content
+ * Truncate DOM using binary search on taper slope
+ * Treats entire page as nested lists - slope controls taper at each level
  */
 const truncateDOM = (root: Element, doc: Document, debug = false) => {
   const targetSize = CONFIG.targetSize;
   const currentSize = measureSize(root);
 
   if (debug) {
-    console.log(`[truncateDOM] currentSize=${currentSize}, targetSize=${targetSize}, threshold=${targetSize * 1.2}`);
+    console.log(`[truncateDOM] currentSize=${currentSize}, targetSize=${targetSize}`);
   }
 
-  // Skip if already under target or only slightly over
-  if (currentSize <= targetSize * 1.2) {
-    if (debug) console.log('[truncateDOM] Skipped: under threshold');
+  if (currentSize <= targetSize) {
+    if (debug) console.log('[truncateDOM] Skipped: already under target');
     return;
   }
 
-  // For very large DOMs (>500KB HTML), use fast path
-  if (currentSize > 500000) {
-    // Find large containers - use lower thresholds for YouTube-style DOMs
-    const containers = Array.from(root.querySelectorAll('*')).filter(el =>
-      el.children.length > 10 && measureSize(el) > 5000
-    );
+  // Build size cache for accurate estimation
+  const sizeCache = buildSizeCache(root);
+  if (debug) {
+    console.log(`[truncateDOM] Cached ${sizeCache.size} elements`);
+  }
+
+  // Binary search on slope, targeting slightly under to account for estimation error
+  const searchTarget = targetSize * SAFETY_MARGIN;
+  let low = 0;
+  let high = 3; // Higher max for deep nesting
+  const epsilon = 0.01;
+  let iterations = 0;
+  const maxIterations = 25;
+
+  while (high - low > epsilon && iterations < maxIterations) {
+    iterations++;
+    const mid = (low + high) / 2;
+    const estimated = estimateTreeSize(root, 1.0, mid, sizeCache);
+
+    if (debug && iterations <= 5) {
+      console.log(`[truncateDOM] slope=${mid.toFixed(3)}, estimated=${Math.round(estimated)}`);
+    }
+
+    if (estimated <= searchTarget) {
+      high = mid; // Can use gentler slope
+    } else {
+      low = mid;  // Need steeper slope
+    }
+  }
+
+  if (debug) {
+    console.log(`[truncateDOM] Binary search slope=${high.toFixed(3)} after ${iterations} iterations`);
+  }
+
+  // Apply and verify - increase slope if still over target
+  let slope = high;
+  const maxRetries = 10;
+  for (let retry = 0; retry < maxRetries; retry++) {
+    applyTreeSlope(root, 1.0, slope);
+    const newSize = measureSize(root);
 
     if (debug) {
-      console.log(`[truncateDOM] Fast path: found ${containers.length} large containers`);
+      console.log(`[truncateDOM] Applied slope=${slope.toFixed(3)}, size=${newSize}`);
     }
 
-    // Sort by size descending and truncate the largest ones
-    containers.sort((a, b) => measureSize(b) - measureSize(a));
-
-    const keepRatio = Math.max(0.05, targetSize / currentSize); // More aggressive: 5% minimum
-    if (debug) console.log(`[truncateDOM] keepRatio=${keepRatio.toFixed(3)}`);
-
-    for (const container of containers.slice(0, 50)) { // Process top 50 largest
-      const childCount = container.children.length;
-      const containerSize = measureSize(container);
-      const keepCount = Math.max(3, Math.ceil(childCount * keepRatio)); // Keep at least 3
-
-      if (debug && childCount > keepCount) {
-        console.log(`[truncateDOM] Truncating ${container.tagName}: ${childCount} children → ${keepCount}, size=${containerSize}`);
-      }
-
-      fastTruncateChildren(container, keepCount, doc);
+    if (newSize <= targetSize) {
+      break;
     }
-    return;
+
+    // Still over target - increase slope by 20%
+    slope *= 1.2;
+    if (debug) {
+      console.log(`[truncateDOM] Still over target, increasing slope to ${slope.toFixed(3)}`);
+    }
   }
 
-  // Normal path for moderate-sized DOMs
-  if (debug) console.log('[truncateDOM] Using budget-based truncation');
-  truncateByBudget(root, targetSize, doc);
+  if (debug) {
+    console.log(`[truncateDOM] Final size=${measureSize(root)}`);
+  }
 };
 
 // ============================================================================
@@ -537,12 +524,14 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
       continue;
     }
 
-    // Clean attributes
+    // Clean attributes (blacklist + heuristic truncation)
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
-      if (!KEEP_ATTRS.has(name)) { el.removeAttribute(attr.name); continue; }
 
-      // Handle href
+      // Remove blacklisted attributes
+      if (shouldRemoveAttr(name)) { el.removeAttribute(attr.name); continue; }
+
+      // Handle href (URL shortening)
       if (name === 'href' && !attr.value.startsWith('javascript:') && !attr.value.startsWith('#')) {
         const clean = preserveQueryParams ? attr.value : cleanUrl(attr.value, CONFIG.keepParams);
         el.setAttribute('href', shortenUrls && clean.length > urlLengthThreshold ? shorten(clean) : clean);
@@ -552,12 +541,17 @@ export function cleanDOM(html: string, options: CleanDOMOptions = {}): CleanDOMR
         if (attr.value.startsWith('data:')) el.setAttribute('src', shorten(attr.value, 'data'));
         else if (shortenUrls && attr.value.length > urlLengthThreshold) el.setAttribute('src', shorten(attr.value));
       }
-      // Truncate long values
-      else if (name === 'aria-label' && attr.value.length > CONFIG.maxAriaLabel) {
-        el.setAttribute(name, attr.value.slice(0, CONFIG.maxAriaLabel) + '...');
-      }
-      else if (attr.value.length > CONFIG.maxAttrValue) {
-        el.setAttribute(name, attr.value.slice(0, CONFIG.maxAttrValue) + '...');
+      // Heuristic truncation for other attributes
+      else if (attr.value.length > CONFIG.otherAttrThreshold) {
+        if (isTextLike(attr.value)) {
+          // Text-like: keep up to 50 chars
+          if (attr.value.length > CONFIG.textAttrLimit) {
+            el.setAttribute(name, attr.value.slice(0, CONFIG.textAttrLimit) + '...');
+          }
+        } else {
+          // Hash/noise: truncate to 7 chars
+          el.setAttribute(name, attr.value.slice(0, CONFIG.otherAttrKeep) + '...');
+        }
       }
     }
   }

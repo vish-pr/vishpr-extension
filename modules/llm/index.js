@@ -21,7 +21,9 @@ import {
   fetchModelsForEndpoint,
   verifyApiKey,
   PREDEFINED_ENDPOINTS,
-  OPENROUTER_ID
+  OPENROUTER_ID,
+  CEREBRAS_ID,
+  MISTRAL_ID
 } from './endpoints.js';
 
 let initialized = false;
@@ -33,7 +35,7 @@ export async function isInitialized() {
   return initialized;
 }
 
-export async function generate({ messages, intelligence = 'MEDIUM', tools, schema }) {
+export async function generate({ messages, intelligence = 'MEDIUM', tools, schema, onModelError }) {
   if (!tools?.length && !schema) {
     throw new Error('Either tools or schema is required');
   }
@@ -45,7 +47,10 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
   const cascadingModels = await getCascadingModels(intelligence);
   let lastError = null;
 
-  for (const { endpoint, model, openrouterProvider, noToolChoice } of cascadingModels) {
+  for (const { endpoint, model, openrouterProvider, noToolChoice, noToolUse } of cascadingModels) {
+    if (tools && noToolUse) {
+      continue;
+    }
     if (await shouldSkip(endpoint, model, openrouterProvider)) {
       continue;
     }
@@ -63,6 +68,7 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
     } catch (error) {
       lastError = error;
       await recordError(endpoint, model, openrouterProvider);
+      onModelError?.({ endpoint, model, openrouterProvider, error: error.message, phase: 'cascade' });
     }
   }
 
@@ -71,7 +77,10 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
   logger.info('Cascade failed, attempting fallback recovery', { models: sortedModels.map(m => m.model) });
 
   const results = [];
-  for (const { endpoint, model, openrouterProvider, noToolChoice } of sortedModels) {
+  for (const { endpoint, model, openrouterProvider, noToolChoice, noToolUse } of sortedModels) {
+    if (tools && noToolUse) {
+      continue;
+    }
     try {
       const result = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
 
@@ -87,6 +96,7 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
       lastError = error;
       results.push({ model, status: 'fail', error: error.message });
       await recordError(endpoint, model, openrouterProvider);
+      onModelError?.({ endpoint, model, openrouterProvider, error: error.message, phase: 'fallback' });
     }
   }
 
@@ -105,7 +115,9 @@ export {
   verifyApiKey,
   verifyModel,
   PREDEFINED_ENDPOINTS,
-  OPENROUTER_ID
+  OPENROUTER_ID,
+  CEREBRAS_ID,
+  MISTRAL_ID
 };
 
 export async function setApiKey(key) {
