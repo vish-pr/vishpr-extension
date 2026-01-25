@@ -80,7 +80,7 @@ export class TimeBucketCounter {
     return latest;
   }
 
-  async getStats(key) {
+  async getStats(key, since = 0) {
     await this.load();
     if (!this.data[key]) return null;
 
@@ -90,7 +90,7 @@ export class TimeBucketCounter {
       const activity = this._getLastActivity(buckets);
       if (activity > lastActivity) lastActivity = activity;
       return [counter, {
-        total: this._sumBuckets(buckets, 0),
+        total: this._sumBuckets(buckets, since),
         lastHour: this._sumBuckets(buckets, now - HOUR),
         lastDay: this._sumBuckets(buckets, now - DAY),
         buckets: { minute: buckets.minute.length, hour: buckets.hour.length, day: buckets.day.length }
@@ -99,9 +99,9 @@ export class TimeBucketCounter {
     return Object.assign(stats, { _lastActivity: lastActivity });
   }
 
-  async getAllStats() {
+  async getAllStats(since = 0) {
     await this.load();
-    return Object.fromEntries(await Promise.all(Object.keys(this.data).map(async key => [key, await this.getStats(key)])));
+    return Object.fromEntries(await Promise.all(Object.keys(this.data).map(async key => [key, await this.getStats(key, since)])));
   }
 
   async reset(key = null, types = null) {

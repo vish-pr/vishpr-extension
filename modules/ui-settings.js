@@ -205,12 +205,12 @@ function getStatsTimeFilter() {
 
 async function renderModelStats(timeFilterMs = getStatsTimeFilter()) {
   const counter = getModelStatsCounter();
-  const allStats = await counter.getAllStats();
+  const cutoffTime = Date.now() - timeFilterMs;
+  const allStats = await counter.getAllStats(cutoffTime);
   const container = elements.modelStatsContainer;
   container.innerHTML = '';
 
   // Filter to entries used within the time filter, separate providers from models
-  const cutoffTime = Date.now() - timeFilterMs;
   const allKeys = Object.keys(allStats).filter(k => (allStats[k]._lastActivity || 0) >= cutoffTime);
   const providers = allKeys.filter(isProviderKey);
   const models = allKeys.filter(k => !isProviderKey(k));
@@ -412,7 +412,8 @@ function createActionCard(actionName, stats) {
 
 async function renderActionStats(timeFilterMs = getStatsTimeFilter()) {
   const counter = getActionStatsCounter();
-  const allStats = await counter.getAllStats();
+  const cutoffTime = Date.now() - timeFilterMs;
+  const allStats = await counter.getAllStats(cutoffTime);
   const container = elements.actionStatsContainer;
   container.innerHTML = '';
 
@@ -423,7 +424,6 @@ async function renderActionStats(timeFilterMs = getStatsTimeFilter()) {
   }
 
   // Filter to actions updated within the time filter
-  const cutoffTime = Date.now() - timeFilterMs;
   const recentActions = actionNames.filter(name => (allStats[name]._lastActivity || 0) >= cutoffTime);
 
   if (!recentActions.length) {
