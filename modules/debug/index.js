@@ -2,7 +2,7 @@
  * Debug Mode - Action execution with trace/critique visualization
  */
 import { elements } from '../dom.js';
-import { renderModelStats, renderActionStats } from '../ui-settings.js';
+import { renderModelStats, renderActionStats, setupStatsTimeFilter, getStatsTimeFilter } from '../ui-settings.js';
 import { getModelStatsCounter, getActionStatsCounter } from './time-bucket-counter.js';
 import { getChatStatus } from '../chat.js';
 import { getTraces, getTraceById, deleteTrace } from './trace-collector.js';
@@ -110,8 +110,9 @@ export async function initDebug() {
     tab.addEventListener('click', () => switchDebugTab(/** @type {HTMLElement} */ (tab).dataset.debugTab));
   });
 
-  // Stats refresh
+  // Stats refresh and time filter
   elements.debugStatsRefreshBtn.addEventListener('click', refreshStats);
+  setupStatsTimeFilter();
 
   // State refresh
   elements.debugStateRefreshBtn.addEventListener('click', refreshState);
@@ -155,7 +156,8 @@ async function switchDebugTab(tabName) {
   elements.debugStateTab.classList.toggle('hidden', tabName !== 'state');
 
   if (tabName === 'stats') {
-    await Promise.all([renderModelStats(), renderActionStats()]);
+    const timeFilter = getStatsTimeFilter();
+    await Promise.all([renderModelStats(timeFilter), renderActionStats(timeFilter)]);
   }
   if (tabName === 'state') {
     await renderState();
@@ -171,7 +173,8 @@ async function refreshStats() {
       getModelStatsCounter().reload(),
       getActionStatsCounter().reload()
     ]);
-    await Promise.all([renderModelStats(), renderActionStats()]);
+    const timeFilter = getStatsTimeFilter();
+    await Promise.all([renderModelStats(timeFilter), renderActionStats(timeFilter)]);
   } finally {
     elements.debugStatsRefreshBtn.disabled = false;
     elements.debugStatsRefreshBtn.classList.remove('loading', 'loading-spinner');

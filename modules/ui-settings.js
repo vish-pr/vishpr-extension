@@ -6,6 +6,7 @@ const THEMES = ['cupcake', 'retro', 'sunset', 'night'];
 const DEFAULT_THEME = 'night';
 const ZOOM = { min: 70, max: 150, default: 100, step: 10 };
 const STATS_WINDOW = 100;
+const DEFAULT_STATS_TIME_FILTER = 604800000; // 1 week in ms
 
 let currentTheme = DEFAULT_THEME;
 let currentZoom = 100;
@@ -196,20 +197,26 @@ function createProviderStatsCard(provider, stats) {
   return el;
 }
 
-async function renderModelStats() {
+/** Get the current stats time filter value from the dropdown */
+function getStatsTimeFilter() {
+  const select = document.getElementById('statsTimeFilter');
+  return select ? parseInt(select.value, 10) : DEFAULT_STATS_TIME_FILTER;
+}
+
+async function renderModelStats(timeFilterMs = getStatsTimeFilter()) {
   const counter = getModelStatsCounter();
   const allStats = await counter.getAllStats();
   const container = elements.modelStatsContainer;
   container.innerHTML = '';
 
-  // Filter to entries used in the last week, separate providers from models
-  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const allKeys = Object.keys(allStats).filter(k => (allStats[k]._lastActivity || 0) >= oneWeekAgo);
+  // Filter to entries used within the time filter, separate providers from models
+  const cutoffTime = Date.now() - timeFilterMs;
+  const allKeys = Object.keys(allStats).filter(k => (allStats[k]._lastActivity || 0) >= cutoffTime);
   const providers = allKeys.filter(isProviderKey);
   const models = allKeys.filter(k => !isProviderKey(k));
 
   if (!models.length && !providers.length) {
-    container.innerHTML = '<div class="text-center py-8 opacity-50"><svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg><p class="text-xs">No model stats yet</p><p class="text-xs opacity-60 mt-1">Stats appear after models are used</p></div>';
+    container.innerHTML = '<div class="text-center py-8 opacity-50"><svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg><p class="text-xs">No model stats in selected time range</p><p class="text-xs opacity-60 mt-1">Try selecting a longer time period</p></div>';
     return;
   }
 
@@ -403,7 +410,7 @@ function createActionCard(actionName, stats) {
     </div>`;
 }
 
-async function renderActionStats() {
+async function renderActionStats(timeFilterMs = getStatsTimeFilter()) {
   const counter = getActionStatsCounter();
   const allStats = await counter.getAllStats();
   const container = elements.actionStatsContainer;
@@ -415,12 +422,12 @@ async function renderActionStats() {
     return;
   }
 
-  // Filter to actions updated in the last 7 days
-  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recentActions = actionNames.filter(name => (allStats[name]._lastActivity || 0) >= sevenDaysAgo);
+  // Filter to actions updated within the time filter
+  const cutoffTime = Date.now() - timeFilterMs;
+  const recentActions = actionNames.filter(name => (allStats[name]._lastActivity || 0) >= cutoffTime);
 
   if (!recentActions.length) {
-    container.innerHTML = '<div class="text-center py-6 opacity-40"><p class="text-xs">No stats in last 7 days</p></div>';
+    container.innerHTML = '<div class="text-center py-6 opacity-40"><p class="text-xs">No stats in selected time range</p></div>';
     return;
   }
 
@@ -466,4 +473,21 @@ export async function initUiSettings() {
   setupResetButton();
 }
 
-export { renderModelStats, renderActionStats };
+/** Refresh both model and action stats with current time filter */
+async function refreshStats() {
+  const timeFilter = getStatsTimeFilter();
+  await Promise.all([
+    renderModelStats(timeFilter),
+    renderActionStats(timeFilter)
+  ]);
+}
+
+/** Setup the stats time filter dropdown listener */
+function setupStatsTimeFilter() {
+  const select = document.getElementById('statsTimeFilter');
+  if (select) {
+    select.addEventListener('change', refreshStats);
+  }
+}
+
+export { renderModelStats, renderActionStats, refreshStats, setupStatsTimeFilter, getStatsTimeFilter };
