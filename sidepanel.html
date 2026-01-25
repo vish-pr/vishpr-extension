@@ -16,20 +16,20 @@
       <img src="icon-128.png" alt="vishpr" class="w-8 h-8 rounded-lg shrink-0">
       <div class="min-w-0">
         <h1 id="headerTitle" class="text-sm font-semibold leading-tight truncate">vishpr</h1>
-        <div class="flex items-center gap-2 text-xs opacity-50">
-          <span class="status status-xs" id="statusDot"></span>
+        <div class="flex items-center gap-2 text-xs opacity-70" aria-live="polite" aria-atomic="true">
+          <span class="status status-xs" id="statusDot" aria-hidden="true"></span>
           <span id="statusText" class="truncate">Ready</span>
         </div>
       </div>
     </div>
     <div class="navbar-end gap-1">
-      <button id="debugToggle" class="btn btn-ghost btn-sm btn-square" title="Debug Mode">
-        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button id="debugToggle" class="btn btn-ghost btn-sm btn-square" title="Debug Mode" aria-label="Toggle debug mode" aria-pressed="false">
+        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2M7.5 13A1.5 1.5 0 1 0 9 14.5A1.5 1.5 0 0 0 7.5 13m9 0a1.5 1.5 0 1 0 1.5 1.5a1.5 1.5 0 0 0-1.5-1.5"/>
         </svg>
       </button>
-      <button id="settingsToggle" class="btn btn-ghost btn-sm btn-square" title="Settings">
-        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button id="settingsToggle" class="btn btn-ghost btn-sm btn-square" title="Settings" aria-label="Open settings" aria-expanded="false">
+        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
@@ -78,21 +78,21 @@
           <div class="tier-section" data-tier="HIGH">
             <div class="flex items-center justify-between mb-2">
               <span class="badge badge-error badge-sm">HIGH</span>
-              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="HIGH" title="Add model">+</button>
+              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="HIGH" title="Add model" aria-label="Add model to HIGH tier">+</button>
             </div>
             <ul class="list bg-base-300 rounded-lg min-h-10" id="modelListHigh"></ul>
           </div>
           <div class="tier-section" data-tier="MEDIUM">
             <div class="flex items-center justify-between mb-2">
               <span class="badge badge-warning badge-sm">MEDIUM</span>
-              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="MEDIUM" title="Add model">+</button>
+              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="MEDIUM" title="Add model" aria-label="Add model to MEDIUM tier">+</button>
             </div>
             <ul class="list bg-base-300 rounded-lg min-h-10" id="modelListMedium"></ul>
           </div>
           <div class="tier-section" data-tier="LOW">
             <div class="flex items-center justify-between mb-2">
               <span class="badge badge-success badge-sm">LOW</span>
-              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="LOW" title="Add model">+</button>
+              <button class="btn btn-ghost btn-xs btn-square tier-add-btn" data-tier="LOW" title="Add model" aria-label="Add model to LOW tier">+</button>
             </div>
             <ul class="list bg-base-300 rounded-lg min-h-10" id="modelListLow"></ul>
           </div>
@@ -107,7 +107,7 @@
         <!-- Theme Selection -->
         <div class="card bg-base-300 p-3 mb-3">
           <div class="text-sm font-medium mb-3">Theme</div>
-          <div id="themeSelector" class="grid grid-cols-4 gap-2">
+          <div id="themeSelector" class="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <button class="theme-btn btn btn-ghost flex flex-col items-center gap-2 p-2 h-auto" data-theme="cupcake">
               <div class="w-8 h-8 rounded-full bg-gradient-to-br from-pink-200 to-pink-100 border-2 border-pink-300"></div>
               <span class="text-xs opacity-50">Cupcake</span>
@@ -132,9 +132,9 @@
           <div class="flex items-center justify-between mb-3">
             <div class="text-sm font-medium">Zoom</div>
             <div class="flex items-center gap-2">
-              <button id="zoomOut" class="btn btn-ghost btn-sm btn-square" title="Zoom out">−</button>
+              <button id="zoomOut" class="btn btn-ghost btn-sm btn-square" title="Zoom out" aria-label="Decrease zoom">−</button>
               <span id="zoomLevel" class="badge badge-ghost text-sm font-mono min-w-14">100%</span>
-              <button id="zoomIn" class="btn btn-ghost btn-sm btn-square" title="Zoom in">+</button>
+              <button id="zoomIn" class="btn btn-ghost btn-sm btn-square" title="Zoom in" aria-label="Increase zoom">+</button>
             </div>
           </div>
           <input type="range" id="zoomSlider" min="70" max="150" value="100" step="10" class="range range-xs range-primary w-full">
@@ -182,7 +182,7 @@
       <div class="w-1/4 min-w-24 max-w-32 border-r border-base-content/10 flex flex-col bg-base-200/50">
         <div class="p-2 border-b border-base-content/10 flex items-center justify-between">
           <span class="text-xs font-medium opacity-50">History</span>
-          <button id="debugClearBtn" class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100" title="Refresh"><svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
+          <button id="debugClearBtn" class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100" title="Refresh" aria-label="Clear trace history"><svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
         </div>
         <div id="debugHistory" class="flex-1 overflow-y-auto p-1 space-y-1"></div>
       </div>
@@ -194,7 +194,7 @@
           <span id="debugTiming" class="text-xs opacity-40 font-mono"></span>
           <div class="flex-1"></div>
           <span id="debugCritiqueBadge" class="badge badge-xs"></span>
-          <button id="debugRefreshBtn" class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100" title="Refresh critique"><svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
+          <button id="debugRefreshBtn" class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100" title="Refresh critique" aria-label="Refresh critique"><svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button>
         </div>
         <!-- Stacked Timeline Content -->
         <div id="debugTimeline" class="flex-1 overflow-y-auto">
@@ -213,7 +213,7 @@
         <span class="text-xs opacity-40">Usage statistics</span>
         <button id="debugStatsRefreshBtn" class="btn btn-ghost btn-xs gap-1 opacity-60 hover:opacity-100" title="Refresh stats">
           <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-          <span class="text-[10px]">Refresh</span>
+          <span class="text-xs">Refresh</span>
         </button>
       </div>
       <!-- Stats Content -->
@@ -257,7 +257,7 @@
         <span class="text-xs opacity-40 font-mono">Runtime state inspector</span>
         <button id="debugStateRefreshBtn" class="btn btn-ghost btn-xs gap-1 opacity-60 hover:opacity-100" title="Refresh state">
           <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
-          <span class="text-[10px]">Refresh</span>
+          <span class="text-xs">Refresh</span>
         </button>
       </div>
       <!-- State Content -->
@@ -270,7 +270,7 @@
   </div>
 
   <!-- Chat Container -->
-  <div class="flex-1 overflow-y-auto p-3 space-y-3" id="chatContainer">
+  <div class="flex-1 overflow-y-auto p-3 space-y-3" id="chatContainer" aria-live="polite" aria-label="Chat messages">
     <div class="empty-state flex-1 flex flex-col items-center justify-center text-center py-8 opacity-50">
       <svg class="w-12 h-12 mb-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -282,14 +282,15 @@
   <!-- Input Area -->
   <div class="bg-base-200 border-t border-base-content/10 p-3">
     <div class="flex gap-2 items-end">
-      <textarea id="messageInput" class="textarea textarea-bordered flex-1 min-h-10 max-h-32 text-sm resize-none leading-relaxed" placeholder="Read the page, click a button, fill a form..." rows="1"></textarea>
-      <button id="sendButton" class="btn btn-primary btn-square" title="Send">
+      <label for="messageInput" class="sr-only">Message to send</label>
+      <textarea id="messageInput" class="textarea textarea-bordered flex-1 min-h-10 max-h-32 text-sm resize-none leading-relaxed" placeholder="Read the page, click a button, fill a form..." rows="1" aria-describedby="messageHint"></textarea>
+      <button id="sendButton" class="btn btn-primary btn-square" title="Send" aria-label="Send message">
         <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
         </svg>
       </button>
     </div>
-    <p class="text-xs opacity-50 text-center mt-2"><kbd class="kbd kbd-xs">Enter</kbd> to send · <kbd class="kbd kbd-xs">Shift+Enter</kbd> for new line</p>
+    <p id="messageHint" class="text-xs opacity-70 text-center mt-2"><kbd class="kbd kbd-xs">Enter</kbd> to send · <kbd class="kbd kbd-xs">Shift+Enter</kbd> for new line</p>
   </div>
 
   <!-- Templates -->
@@ -301,8 +302,8 @@
         <span class="endpoint-name badge badge-outline badge-sm font-mono"></span>
       </div>
       <div class="endpoint-key text-xs opacity-40 truncate max-w-24"></div>
-      <button class="btn btn-ghost btn-xs btn-square edit" title="Edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-      <button class="btn btn-ghost btn-xs btn-square delete hover:btn-error" title="Remove"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square edit" title="Edit" aria-label="Edit endpoint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square delete hover:btn-error" title="Remove" aria-label="Remove endpoint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </li>
   </template>
   <template id="tpl-endpoint-editing">
@@ -317,8 +318,8 @@
         <input type="text" class="endpoint-url-input input input-xs input-bordered w-full font-mono text-xs" placeholder="https://api.example.com/v1/chat/completions">
         <input type="password" class="endpoint-key-input input input-xs input-bordered w-full" placeholder="API key (optional)">
       </div>
-      <button class="btn btn-ghost btn-xs btn-square save hover:btn-success" title="Save"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg></button>
-      <button class="btn btn-ghost btn-xs btn-square cancel" title="Cancel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square save hover:btn-success" title="Save" aria-label="Save endpoint"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square cancel" title="Cancel" aria-label="Cancel editing"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </li>
   </template>
 
@@ -330,14 +331,14 @@
         <div class="flex items-center gap-2">
           <span class="model-endpoint badge badge-ghost badge-xs opacity-60"></span>
           <span class="model-name text-xs font-mono truncate"></span>
-          <span class="model-provider text-[0.65rem] opacity-40"></span>
+          <span class="model-provider text-xs opacity-60"></span>
           <span class="warning-indicator hidden"></span>
         </div>
         <div class="model-stats flex items-center gap-2 text-xs opacity-50 mt-0.5"></div>
       </div>
-      <button class="btn btn-ghost btn-xs btn-square edit" title="Edit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-      <button class="btn btn-ghost btn-xs btn-square delete hover:btn-error" title="Remove"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-      <div class="drag-handle opacity-30 hover:opacity-60 transition-opacity ml-1"><svg width="8" height="12" viewBox="0 0 10 14" fill="currentColor"><circle cx="2" cy="2" r="1.5"/><circle cx="8" cy="2" r="1.5"/><circle cx="2" cy="7" r="1.5"/><circle cx="8" cy="7" r="1.5"/><circle cx="2" cy="12" r="1.5"/><circle cx="8" cy="12" r="1.5"/></svg></div>
+      <button class="btn btn-ghost btn-xs btn-square edit" title="Edit" aria-label="Edit model"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square delete hover:btn-error" title="Remove" aria-label="Remove model"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <div class="drag-handle opacity-30 hover:opacity-60 transition-opacity ml-1" aria-label="Drag to reorder"><svg width="8" height="12" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="2" cy="2" r="1.5"/><circle cx="8" cy="2" r="1.5"/><circle cx="2" cy="7" r="1.5"/><circle cx="8" cy="7" r="1.5"/><circle cx="2" cy="12" r="1.5"/><circle cx="8" cy="12" r="1.5"/></svg></div>
     </li>
   </template>
   <template id="tpl-model-editing">
@@ -355,8 +356,8 @@
           </div>
         </div>
       </div>
-      <button class="btn btn-ghost btn-xs btn-square save hover:btn-success" title="Save"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg></button>
-      <button class="btn btn-ghost btn-xs btn-square cancel" title="Cancel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square save hover:btn-success" title="Save" aria-label="Save model"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg></button>
+      <button class="btn btn-ghost btn-xs btn-square cancel" title="Cancel" aria-label="Cancel editing"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </li>
   </template>
   <template id="tpl-stats-card">
@@ -416,8 +417,8 @@
         <div class="divider text-xs opacity-50 my-2">or type your answer</div>
         <div class="join w-full">
           <input type="text" class="input input-bordered input-sm join-item flex-1 clarification-input" placeholder="Something else...">
-          <button class="btn btn-sm btn-primary join-item clarification-submit-btn">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <button class="btn btn-sm btn-primary join-item clarification-submit-btn" aria-label="Submit custom answer">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </button>
         </div>
       </div>

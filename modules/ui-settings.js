@@ -180,14 +180,14 @@ function createProviderStatsCard(provider, stats) {
   el.innerHTML = `
     <div class="flex items-center gap-2">
       <div class="radial-progress text-xs font-mono shrink-0 ${getColorClass(rate)}" style="--size:2.5rem; --thickness:3px; --value:${rate};" role="progressbar">
-        <span class="text-[10px] font-semibold">${rate}%</span>
+        <span class="text-xs font-semibold">${rate}%</span>
       </div>
       <div class="flex-1 min-w-0">
         <div class="font-mono text-xs truncate font-medium">${provider}</div>
         <div class="flex gap-2 mt-0.5">
-          <span class="text-[10px] text-success">${success} ok</span>
-          <span class="text-[10px] text-error">${error} err</span>
-          <span class="text-[10px] opacity-50">${total} total</span>
+          <span class="text-xs text-success">${success} ok</span>
+          <span class="text-xs text-error">${error} err</span>
+          <span class="text-xs opacity-50">${total} total</span>
         </div>
       </div>
     </div>
@@ -209,7 +209,7 @@ async function renderModelStats() {
   const models = allKeys.filter(k => !isProviderKey(k));
 
   if (!models.length && !providers.length) {
-    container.innerHTML = '<div class="text-center py-8 opacity-50"><svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg><p class="text-xs">No model stats yet</p><p class="text-[10px] opacity-60 mt-1">Stats appear after models are used</p></div>';
+    container.innerHTML = '<div class="text-center py-8 opacity-50"><svg class="w-10 h-10 mx-auto mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg><p class="text-xs">No model stats yet</p><p class="text-xs opacity-60 mt-1">Stats appear after models are used</p></div>';
     return;
   }
 
@@ -250,7 +250,7 @@ async function renderModelStats() {
   if (providers.length) {
     const providerSection = document.createElement('div');
     providerSection.className = 'mb-3';
-    providerSection.innerHTML = '<div class="text-[10px] uppercase tracking-wide opacity-40 mb-1.5 font-medium">By Provider</div>';
+    providerSection.innerHTML = '<div class="text-xs uppercase tracking-wide opacity-40 mb-1.5 font-medium">By Provider</div>';
     const providerGrid = document.createElement('div');
     providerGrid.className = 'grid gap-1.5';
     providers.forEach(p => providerGrid.appendChild(createProviderStatsCard(getProviderName(p), allStats[p])));
@@ -261,7 +261,7 @@ async function renderModelStats() {
   // Render model stats section
   if (models.length) {
     const modelSection = document.createElement('div');
-    modelSection.innerHTML = '<div class="text-[10px] uppercase tracking-wide opacity-40 mb-1.5 font-medium">By Model</div>';
+    modelSection.innerHTML = '<div class="text-xs uppercase tracking-wide opacity-40 mb-1.5 font-medium">By Model</div>';
     const modelGrid = document.createElement('div');
     modelGrid.className = 'grid gap-2';
     models.forEach(m => modelGrid.appendChild(createStatsCard(m, allStats[m])));
@@ -320,17 +320,17 @@ function createStatGroup(groupName, entries, colorIdx = 0) {
       const color = GROUP_COLORS[(colorIdx + idx) % GROUP_COLORS.length];
       return `
         <div class="flex items-center gap-2">
-          <span class="text-[10px] font-mono w-28 truncate opacity-70" title="${name}">${name}</span>
+          <span class="text-xs font-mono w-28 truncate opacity-70" title="${name}">${name}</span>
           <div class="flex-1 h-1.5 bg-base-content/10 rounded-full overflow-hidden">
             <div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div>
           </div>
-          <span class="text-[10px] font-mono tabular-nums opacity-50 w-8 text-right">${count}</span>
+          <span class="text-xs font-mono tabular-nums opacity-50 w-8 text-right">${count}</span>
         </div>`;
     }).join('');
 
   return `
     <div class="stat-group mb-2">
-      <div class="text-[10px] uppercase tracking-wider opacity-40 mb-1">${groupName} <span class="opacity-50">(${total})</span></div>
+      <div class="text-xs uppercase tracking-wider opacity-40 mb-1">${groupName} <span class="opacity-50">(${total})</span></div>
       <div class="space-y-1">${barsHtml}</div>
     </div>`;
 }
