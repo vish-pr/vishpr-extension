@@ -206,12 +206,21 @@ function getStatsTimeFilter() {
 async function renderModelStats(timeFilterMs = getStatsTimeFilter()) {
   const counter = getModelStatsCounter();
   const cutoffTime = Date.now() - timeFilterMs;
+  // Add 1 minute buffer for _lastActivity check since bucket timestamps are rounded down
+  const activityCutoff = cutoffTime - 60000;
   const allStats = await counter.getAllStats(cutoffTime);
   const container = elements.modelStatsContainer;
   container.innerHTML = '';
 
-  // Filter to entries used within the time filter, separate providers from models
-  const allKeys = Object.keys(allStats).filter(k => (allStats[k]._lastActivity || 0) >= cutoffTime);
+  // Filter to entries with activity within time filter (with buffer for bucket rounding)
+  // Also filter out entries with zero totals (no data in the time window)
+  const allKeys = Object.keys(allStats).filter(k => {
+    const stats = allStats[k];
+    if ((stats._lastActivity || 0) < activityCutoff) return false;
+    // Check if there's any actual data (success or error > 0)
+    const hasData = (stats.success?.total || 0) + (stats.error?.total || 0) > 0;
+    return hasData;
+  });
   const providers = allKeys.filter(isProviderKey);
   const models = allKeys.filter(k => !isProviderKey(k));
 
@@ -413,6 +422,8 @@ function createActionCard(actionName, stats) {
 async function renderActionStats(timeFilterMs = getStatsTimeFilter()) {
   const counter = getActionStatsCounter();
   const cutoffTime = Date.now() - timeFilterMs;
+  // Add 1 minute buffer for _lastActivity check since bucket timestamps are rounded down
+  const activityCutoff = cutoffTime - 60000;
   const allStats = await counter.getAllStats(cutoffTime);
   const container = elements.actionStatsContainer;
   container.innerHTML = '';
@@ -423,8 +434,8 @@ async function renderActionStats(timeFilterMs = getStatsTimeFilter()) {
     return;
   }
 
-  // Filter to actions updated within the time filter
-  const recentActions = actionNames.filter(name => (allStats[name]._lastActivity || 0) >= cutoffTime);
+  // Filter to actions updated within the time filter (with buffer for bucket rounding)
+  const recentActions = actionNames.filter(name => (allStats[name]._lastActivity || 0) >= activityCutoff);
 
   if (!recentActions.length) {
     container.innerHTML = '<div class="text-center py-6 opacity-40"><p class="text-xs">No stats in selected time range</p></div>';
