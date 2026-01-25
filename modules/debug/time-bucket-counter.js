@@ -1,14 +1,15 @@
 /**
- * Time-Bucketed Counter with Multi-Tier Aggregation
- * Tiers: minute (60 buckets), hour (24 buckets), day (30 buckets)
+ * Simple Stats Counter - stores daily counts for last 30 days
+ * Much simpler than the previous tiered bucket approach
  */
 
-const MINUTE = 60_000, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
-const TIERS = { minute: { duration: MINUTE, retention: 60 }, hour: { duration: HOUR, retention: 24 }, day: { duration: DAY, retention: 30 } };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RETENTION_DAYS = 30;
 
-const getBucketTs = (time, duration) => Math.floor(time / duration) * duration;
+/** Get date key like "2024-01-25" from timestamp */
+const getDateKey = (ts = Date.now()) => new Date(ts).toISOString().slice(0, 10);
 
-export class TimeBucketCounter {
+export class StatsCounter {
   constructor(storageKey, storage = null) {
     this.storageKey = storageKey;
     this.storage = storage;
@@ -31,83 +32,83 @@ export class TimeBucketCounter {
     if (this.storage) await this.storage.set({ [this.storageKey]: this.data });
   }
 
+  /** Prune entries older than 30 days */
+  _prune(counters) {
+    const cutoffDate = getDateKey(Date.now() - RETENTION_DAYS * DAY_MS);
+    for (const [type, daily] of Object.entries(counters)) {
+      if (typeof daily !== 'object') continue;
+      for (const date of Object.keys(daily)) {
+        if (date < cutoffDate) delete daily[date];
+      }
+    }
+  }
+
   async increment(key, counter = 'count', amount = 1) {
     await this.load();
-    const now = Date.now();
+    const dateKey = getDateKey();
+
     this.data[key] ??= {};
-    this.data[key][counter] ??= { minute: [], hour: [], day: [] };
+    this.data[key][counter] ??= {};
+    this.data[key][counter][dateKey] = (this.data[key][counter][dateKey] || 0) + amount;
 
-    const buckets = this.data[key][counter];
-    const ts = getBucketTs(now, MINUTE);
-    let bucket = buckets.minute.find(b => b.ts === ts);
-    if (!bucket) buckets.minute.push(bucket = { ts, count: 0 });
-    bucket.count += amount;
+    // Prune old data periodically (when we have > 35 days)
+    if (Object.keys(this.data[key][counter]).length > 35) {
+      this._prune(this.data[key]);
+    }
 
-    this._aggregate(buckets, now);
     await this.save();
   }
 
-  _aggregate(buckets, now) {
-    const rollUp = (src, dest, srcTier, destTier) => {
-      const cutoff = now - TIERS[srcTier].retention * TIERS[srcTier].duration;
-      for (const b of buckets[src].filter(b => b.ts < cutoff)) {
-        const ts = getBucketTs(b.ts, TIERS[destTier].duration);
-        let target = buckets[dest].find(d => d.ts === ts);
-        if (!target) buckets[dest].push(target = { ts, count: 0 });
-        target.count += b.count;
-      }
-      buckets[src] = buckets[src].filter(b => b.ts >= cutoff).sort((a, b) => a.ts - b.ts);
-    };
-
-    rollUp('minute', 'hour', 'minute', 'hour');
-    rollUp('hour', 'day', 'hour', 'day');
-    const monthCutoff = now - TIERS.day.retention * DAY;
-    buckets.day = buckets.day.filter(b => b.ts >= monthCutoff).sort((a, b) => a.ts - b.ts);
+  /** Sum counts from a counter object, optionally filtered by time */
+  _sumCounts(daily, since = 0) {
+    if (!daily || typeof daily !== 'object') return 0;
+    const sinceDate = since > 0 ? getDateKey(since) : '';
+    return Object.entries(daily)
+      .filter(([date]) => date >= sinceDate)
+      .reduce((sum, [, count]) => sum + count, 0);
   }
 
-  _sumBuckets(buckets, since) {
-    return ['minute', 'hour', 'day'].reduce((sum, tier) =>
-      sum + buckets[tier].filter(b => b.ts >= since).reduce((s, b) => s + b.count, 0), 0);
-  }
-
-  _getLastActivity(buckets) {
-    let latest = 0;
-    for (const tier of ['minute', 'hour', 'day']) {
-      for (const b of buckets[tier]) {
-        if (b.ts > latest) latest = b.ts;
+  /** Get the most recent date with activity */
+  _getLastActivity(counters) {
+    let latest = '';
+    for (const [type, daily] of Object.entries(counters)) {
+      if (typeof daily !== 'object') continue;
+      for (const date of Object.keys(daily)) {
+        if (date > latest) latest = date;
       }
     }
-    return latest;
+    // Convert date string back to timestamp (end of that day for safety)
+    return latest ? new Date(latest + 'T23:59:59Z').getTime() : 0;
   }
 
   async getStats(key, since = 0) {
     await this.load();
     if (!this.data[key]) return null;
 
-    const now = Date.now();
-    let lastActivity = 0;
-    const stats = Object.fromEntries(Object.entries(this.data[key]).map(([counter, buckets]) => {
-      const activity = this._getLastActivity(buckets);
-      if (activity > lastActivity) lastActivity = activity;
-      return [counter, {
-        total: this._sumBuckets(buckets, since),
-        lastHour: this._sumBuckets(buckets, now - HOUR),
-        lastDay: this._sumBuckets(buckets, now - DAY),
-        buckets: { minute: buckets.minute.length, hour: buckets.hour.length, day: buckets.day.length }
-      }];
-    }));
-    return Object.assign(stats, { _lastActivity: lastActivity });
+    const counters = this.data[key];
+    const stats = {};
+
+    for (const [type, daily] of Object.entries(counters)) {
+      if (typeof daily !== 'object') continue;
+      stats[type] = { total: this._sumCounts(daily, since) };
+    }
+
+    stats._lastActivity = this._getLastActivity(counters);
+    return stats;
   }
 
   async getAllStats(since = 0) {
     await this.load();
-    return Object.fromEntries(await Promise.all(Object.keys(this.data).map(async key => [key, await this.getStats(key, since)])));
+    const result = {};
+    for (const key of Object.keys(this.data)) {
+      result[key] = await this.getStats(key, since);
+    }
+    return result;
   }
 
   async reset(key = null, types = null) {
     await this.load();
     if (key && types?.length) {
-      // Reset specific counter types for a key
       if (this.data[key]) {
         for (const type of types) delete this.data[key][type];
         if (!Object.keys(this.data[key]).length) delete this.data[key];
@@ -121,6 +122,9 @@ export class TimeBucketCounter {
   }
 }
 
+// Keep the old class name as alias for compatibility
+export { StatsCounter as TimeBucketCounter };
+
 let modelStatsCounter = null;
 
 export function modelStatsKey(endpoint, model, openrouterProvider) {
@@ -128,12 +132,12 @@ export function modelStatsKey(endpoint, model, openrouterProvider) {
 }
 
 export function providerStatsKey(endpoint) {
-  // Extract just the provider (e.g., "openrouter" from "openrouter:qwen")
   return `provider:${endpoint.split(':')[0]}`;
 }
 
 export function getModelStatsCounter() {
-  return modelStatsCounter ??= new TimeBucketCounter('modelStatsV2', {
+  // Use new storage key to start fresh with simplified format
+  return modelStatsCounter ??= new StatsCounter('modelStatsV3', {
     get: keys => chrome.storage.local.get(keys),
     set: items => chrome.storage.local.set(items)
   });
@@ -142,7 +146,8 @@ export function getModelStatsCounter() {
 let actionStatsCounter = null;
 
 export function getActionStatsCounter() {
-  return actionStatsCounter ??= new TimeBucketCounter('actionStatsV2', {
+  // Use new storage key to start fresh with simplified format
+  return actionStatsCounter ??= new StatsCounter('actionStatsV3', {
     get: keys => chrome.storage.local.get(keys),
     set: items => chrome.storage.local.set(items)
   });
