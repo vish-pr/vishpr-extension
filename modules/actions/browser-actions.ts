@@ -228,13 +228,44 @@ export const CLICK_ELEMENT: Action = {
 };
 
 /**
- * NAVIGATE_TO action
+ * SWITCH_TAB action
  */
-export const NAVIGATE_TO: Action = {
-  name: 'NAVIGATE_TO',
-  description: 'Navigate the browser to a specific URL. Use when user provides a URL or you need to go to a known address.',
+export const SWITCH_TAB: Action = {
+  name: 'SWITCH_TAB',
+  description: 'Switch focus to an existing browser tab without changing its URL.',
   examples: [
-    'Go to https://google.com',
+    'Switch to tab 123',
+    'Focus the other tab'
+  ],
+  input_schema: {
+    type: 'object',
+    properties: {
+      tabId: { type: 'number', description: 'Tab ID to switch to' },
+      justification: { type: 'string', description: 'Why switching tabs' }
+    },
+    required: ['tabId'],
+    additionalProperties: true
+  },
+  steps: [
+    {
+      type: 'function',
+      handler: async (ctx: StepContext): Promise<StepResult> => {
+        const chrome = getChromeAPI();
+        const result = await chrome.switchTab(ctx.tabId);
+        return { result };
+      }
+    }
+  ]
+};
+
+/**
+ * CHANGE_TAB_URL action
+ */
+export const CHANGE_TAB_URL: Action = {
+  name: 'CHANGE_TAB_URL',
+  description: 'Change the URL of an existing tab. Use when you want to navigate within the same tab.',
+  examples: [
+    'Go to https://google.com in this tab',
     'Navigate to https://github.com'
   ],
   input_schema: {
@@ -254,6 +285,38 @@ export const NAVIGATE_TO: Action = {
         const chrome = getChromeAPI();
         const navResult = await chrome.navigateTo(ctx.tabId, ctx.url);
         return { result: navResult };
+      }
+    }
+  ]
+};
+
+/**
+ * OPEN_URL_IN_NEW_TAB action
+ */
+export const OPEN_URL_IN_NEW_TAB: Action = {
+  name: 'OPEN_URL_IN_NEW_TAB',
+  description: 'Open a URL in a new browser tab.',
+  examples: [
+    'Open https://google.com in a new tab',
+    'Open this link in new tab'
+  ],
+  input_schema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'URL to open' },
+      active: { type: 'boolean', description: 'Whether to focus the new tab (default: true)' },
+      justification: { type: 'string', description: 'Why opening in new tab' }
+    },
+    required: ['url'],
+    additionalProperties: true
+  },
+  steps: [
+    {
+      type: 'function',
+      handler: async (ctx: StepContext): Promise<StepResult> => {
+        const chrome = getChromeAPI();
+        const result = await chrome.openInNewTab(ctx.url, ctx.active ?? true);
+        return { result };
       }
     }
   ]
@@ -547,7 +610,7 @@ export const WAIT_FOR_ELEMENT: Action = {
  */
 export const GO_BACK: Action = {
   name: 'GO_BACK',
-  description: 'Navigate back one page in browser history.',
+  description: 'Navigate back one page in browser history. Response includes canGoBack and canGoForward to indicate if further navigation is possible.',
   examples: [
     'Go back',
     'Return to the previous page'
@@ -578,7 +641,7 @@ export const GO_BACK: Action = {
  */
 export const GO_FORWARD: Action = {
   name: 'GO_FORWARD',
-  description: 'Navigate forward one page in browser history.',
+  description: 'Navigate forward one page in browser history. Response includes canGoBack and canGoForward to indicate if further navigation is possible.',
   examples: [
     'Go forward',
     'Return to the page I was just on'
@@ -610,7 +673,9 @@ export const GO_FORWARD: Action = {
 export const browserActions: Action[] = [
   READ_PAGE,
   CLICK_ELEMENT,
-  NAVIGATE_TO,
+  SWITCH_TAB,
+  CHANGE_TAB_URL,
+  OPEN_URL_IN_NEW_TAB,
   GET_PAGE_STATE,
   FILL_FORM,
   SELECT_OPTION,
@@ -646,12 +711,6 @@ export const BROWSER_ACTION_ROUTER: Action = {
     additionalProperties: true
   },
   steps: [
-    // Step 1: Select relevant context
-    {
-      type: 'action',
-      action: CONTEXT_SELECTOR_ACTION.name
-    },
-    // Step 2: Execute browser actions with filtered context
     {
       type: 'llm',
       system_prompt: `You are an autonomous browser interaction agent.
@@ -670,7 +729,7 @@ CORE PRINCIPLES
 AUTONOMOUS NAVIGATION RULE (CRITICAL)
 ────────────────────────────────────────
 If the user's goal requires web content AND no page is currently loaded:
-→ YOU MUST NAVIGATE_TO an appropriate public website before any READ_PAGE.
+→ YOU MUST CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB to an appropriate public website before any READ_PAGE.
 
 Examples:
 • Goal: "play music" → navigate to a music streaming site
@@ -696,7 +755,7 @@ TOOLS
 WORKFLOW RULES
 ────────────────────────────────────────
 MUST:
-• NAVIGATE_TO if no page context exists and goal requires content
+• CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB if no page context exists and goal requires content
 • READ_PAGE before ANY interaction
 • Use elementId from MOST RECENT READ_PAGE
 • Use FINAL_RESPONSE when task is complete or blocked or you have gathered data for request and need to format or present it to the user
@@ -722,7 +781,9 @@ INTENT MAPPING
 ────────────────────────────────────────
 "What is on this page?" → READ_PAGE
 "Show page content" → READ_PAGE
-"Go to https://example.com" → NAVIGATE_TO
+"Go to https://example.com" → CHANGE_TAB_URL
+"Open https://example.com in new tab" → OPEN_URL_IN_NEW_TAB
+"Switch to tab 123" → SWITCH_TAB
 "Click the login button" → READ_PAGE → CLICK_ELEMENT
 "Search for 'laptop'" → READ_PAGE → FILL_FORM → SUBMIT_FORM
 "Finish" / "Done" / "Return result" → FINAL_RESPONSE
@@ -731,29 +792,34 @@ INTENT MAPPING
 REMINDER
 ────────────────────────────────────────
 If no element IDs are available, READ_PAGE.
-If no page exists, NAVIGATE_TO first.
+If no page exists, use CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB first.
 Use FINAL_RESPONSE to terminate.`,
       message: `Execute browser interaction.
 
 Context:
 {{{context}}}
 
+<current_browser_tabs>
+{{{browser_state}}}
+</current_browser_tabs>
+
 Goal: {{{goal}}}
 
 If no element IDs available, READ_PAGE first. Use {{{stop_action}}} when done or after 2 failed attempts.`,
       continuation_message: `Previous action completed. Review the result above.
 
-Context:
-{{{context}}}
+<current_browser_tabs>
+{{{browser_state}}}
+</current_browser_tabs>
 
-Goal: {{{goal}}}
+Original goal was: {{{goal}}}
 
 Decision:
-- If the goal is FULLY achieved → use {{{stop_action}}} immediately
-- If more steps needed → select the next action
-
-Do NOT repeat successful actions. Trust previous results.`,
-      intelligence: 'MEDIUM',
+- If the goal is FULLY satisfied by the previous result or all information is collected to slove user query → use {{{stop_action}}}
+- Else select the MOST APPROPRIATE tool to continue progress towards the goal.
+- If you encountered an error in the previous action, try ONE alternative approach.
+- If you encounter the SAME error AGAIN, use {{{stop_action}}} to report the issue.`,
+      intelligence: 'HIGH',
       tool_choice: {
         available_actions: [
           USER_CLARIFICATION_ACTION.name,
@@ -763,7 +829,9 @@ Do NOT repeat successful actions. Trust previous results.`,
           SELECT_OPTION.name,
           CHECK_CHECKBOX.name,
           SUBMIT_FORM.name,
-          NAVIGATE_TO.name,
+          SWITCH_TAB.name,
+          CHANGE_TAB_URL.name,
+          OPEN_URL_IN_NEW_TAB.name,
           SCROLL_TO.name,
           WAIT_FOR_LOAD.name,
           WAIT_FOR_ELEMENT.name,

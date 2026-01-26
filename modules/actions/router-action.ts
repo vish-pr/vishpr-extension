@@ -132,24 +132,22 @@ Context:
 Goal: {{{goal}}}
 
 Select ONE tool. Use {{{stop_action}}} when objective complete or after 2 failed attempts.`,
-      continuation_message: `Previous action completed. Review the result above.
+      continuation_message: `Previous action completed. Review the result above. Note user does not see this message, they only see output of {{{stop_action}}}.
 
-Context:
-{{{context}}}
 
-Goal: {{{goal}}}
+Original Goal was: {{{goal}}}
 
 Decision:
-- If the goal is FULLY satisfied by the previous result → use {{{stop_action}}} immediately
-- If critical information is still missing → select the next tool
-
-Do NOT retry the same action unless it failed. Trust successful results.`,
-      intelligence: 'MEDIUM',
+- If the goal is FULLY satisfied by the previous result or all information is collected to slove user query → use {{{stop_action}}}
+- Else select the MOST APPROPRIATE tool to continue progress towards the goal.
+- If you encountered an error in the previous action, try ONE alternative approach.
+- If you encounter the SAME error AGAIN, use {{{stop_action}}} to report the issue.`,
+      intelligence: 'HIGH',
       tool_choice: {
         available_actions: [
+          USER_CLARIFICATION_ACTION.name,
           BROWSER_ACTION_ROUTER.name,
           LLM_ACTION.name,
-          USER_CLARIFICATION_ACTION.name,
           FINAL_RESPONSE_ACTION.name
         ],
         stop_action: FINAL_RESPONSE_ACTION.name,

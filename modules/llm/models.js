@@ -51,6 +51,8 @@ export async function getCascadingModels(intelligence) {
     })));
 }
 
+const SKIP_WINDOW_MS = 60 * 1000; // Only skip models with errors in last 1 minute
+
 export async function shouldSkip(endpoint, model, openrouterProvider) {
   const counter = getModelStatsCounter();
   const key = modelStatsKey(endpoint, model, openrouterProvider);
@@ -68,7 +70,11 @@ export async function shouldSkip(endpoint, model, openrouterProvider) {
   // If success is latest, try using model
   if (lastSuccess >= lastError) return false;
 
-  // Error is latest - count errors after last success
+  // Only skip if error was within the skip window
+  const now = Date.now();
+  if (now - lastError > SKIP_WINDOW_MS) return false;
+
+  // Error is latest and recent - count errors after last success
   const errorsSinceSuccess = errors.filter(([ts]) => ts > lastSuccess).length;
   if (errorsSinceSuccess === 0) return false;
 

@@ -387,10 +387,3 @@ Output: 2-5 sentences, one preference each. Or: "No new preferences identified."
   ]
 };
 
-// =============================================================================
-// Exports
-// =============================================================================
-
-export const preferenceExtractorActions: Action[] = [
-  PREFERENCE_EXTRACTOR_ACTION
-];

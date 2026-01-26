@@ -56,14 +56,14 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
     }
 
     try {
-      const result = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
+      const response = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
 
-      if (tools && result.tool_calls?.length && !result.tool_calls[0].function?.name) {
+      if (tools && response.result.tool_calls?.length && !response.result.tool_calls[0].function?.name) {
         throw new Error('Invalid tool call: missing function name');
       }
 
       await recordSuccess(endpoint, model, openrouterProvider);
-      return result;
+      return response;
 
     } catch (error) {
       lastError = error;
@@ -82,16 +82,16 @@ export async function generate({ messages, intelligence = 'MEDIUM', tools, schem
       continue;
     }
     try {
-      const result = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
+      const response = await callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice });
 
-      if (tools && result.tool_calls?.length && !result.tool_calls[0].function?.name) {
+      if (tools && response.result.tool_calls?.length && !response.result.tool_calls[0].function?.name) {
         throw new Error('Invalid tool call: missing function name');
       }
 
       results.push({ model, status: 'pass' });
       logger.info('Fallback recovery complete', { results });
       await recordSuccess(endpoint, model, openrouterProvider);
-      return result;
+      return response;
     } catch (error) {
       lastError = error;
       results.push({ model, status: 'fail', error: error.message });

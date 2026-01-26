@@ -8,9 +8,9 @@ import { LLM_ACTION } from './llm-action.js';
 import { ROUTER_ACTION } from './router-action.js';
 import { CRITIQUE_ACTION } from './critique-action.js';
 import { knowledgeBaseActions } from './knowledge-base-action.js';
-import { clarificationActions } from './clarification-actions.js';
-import { preferenceExtractorActions } from './preference-extractor-action.js';
-import { contextSelectorActions } from './context-selector-action.js';
+import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
+import { PREFERENCE_EXTRACTOR_ACTION } from './preference-extractor-action.js';
+import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
 import logger from '../logger.js';
 
 export type { ClarificationAnswer } from './clarification-actions.js';
@@ -27,9 +27,9 @@ const allActions: Action[] = [
   BROWSER_ACTION_ROUTER,
   CRITIQUE_ACTION,
   ...knowledgeBaseActions,
-  ...clarificationActions,
-  ...preferenceExtractorActions,
-  ...contextSelectorActions
+  USER_CLARIFICATION_ACTION,
+  PREFERENCE_EXTRACTOR_ACTION,
+  CONTEXT_SELECTOR_ACTION
 ];
 
 export const actionsRegistry: ActionsRegistry = Object.fromEntries(

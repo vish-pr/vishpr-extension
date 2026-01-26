@@ -476,9 +476,90 @@ function renderCritiqueBlock(run) {
   `;
 }
 
+// Capture expanded state of trace nodes and tool calls as index-based paths
+function captureExpandedState() {
+  const expandedPaths = new Set();
+
+  // Capture expanded trace nodes - build path by walking up
+  elements.debugTimeline.querySelectorAll('.trace-node.expanded').forEach(node => {
+    const path = getTracePath(node);
+    if (path !== null) expandedPaths.add('node:' + path);
+  });
+
+  // Capture expanded tool calls - simple index within container
+  elements.debugTimeline.querySelectorAll('.tool-call-inline[data-expanded="true"]').forEach((call, globalIdx) => {
+    expandedPaths.add('tool:' + globalIdx);
+  });
+
+  return expandedPaths;
+}
+
+// Get path for a trace node as indices at each depth level
+function getTracePath(node) {
+  const indices = [];
+  let current = node;
+
+  while (current?.classList.contains('trace-node')) {
+    // Find index among siblings in the same container
+    const container = current.parentElement;
+    if (!container) break;
+
+    const siblings = Array.from(container.querySelectorAll(':scope > .trace-node'));
+    const idx = siblings.indexOf(current);
+    if (idx === -1) break;
+
+    indices.unshift(idx);
+
+    // Move up: parent container might be .trace-children or .timeline-block-content
+    const parentNode = container.closest('.trace-node');
+    current = parentNode;
+  }
+
+  return indices.length ? indices.join('-') : null;
+}
+
+// Restore expanded state after re-render
+function restoreExpandedState(expandedPaths) {
+  if (!expandedPaths.size) return;
+
+  expandedPaths.forEach(pathKey => {
+    const [type, path] = pathKey.split(':');
+    if (path === undefined) return;
+
+    if (type === 'node') {
+      // Traverse trace tree by indices
+      const indices = path.split('-').map(Number);
+      let container = elements.debugTimeline.querySelector('.timeline-block-content');
+      if (!container) return;
+
+      let targetNode = null;
+      for (let i = 0; i < indices.length; i++) {
+        const nodes = container.querySelectorAll(':scope > .trace-node');
+        targetNode = nodes[indices[i]];
+        if (!targetNode) return;
+        // Next level is inside .trace-children (not needed for last index)
+        if (i < indices.length - 1) {
+          container = targetNode.querySelector(':scope > .trace-children');
+          if (!container) return;
+        }
+      }
+
+      if (targetNode) targetNode.classList.add('expanded');
+    } else {
+      // Tool calls - restore by global index
+      const idx = parseInt(path, 10);
+      const calls = elements.debugTimeline.querySelectorAll('.tool-call-inline');
+      if (calls[idx]) calls[idx].dataset.expanded = 'true';
+    }
+  });
+}
+
 async function refreshCritique() {
   if (state.selected < 0) return;
   const run = state.history[state.selected];
+
+  // Capture current expanded state before re-render
+  const expandedState = captureExpandedState();
 
   // Show loading state
   elements.debugCritiqueBadge.textContent = '...';
@@ -491,6 +572,9 @@ async function refreshCritique() {
       run.critique = findCritiqueResult(traceData.trace);
     }
     renderTimeline(run);
+
+    // Restore expanded state after render
+    restoreExpandedState(expandedState);
   } catch (e) {
     elements.debugCritiqueBadge.textContent = '!';
     elements.debugCritiqueBadge.className = 'badge badge-xs badge-error';

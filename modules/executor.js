@@ -211,11 +211,11 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
 
   // Single-turn: no tool_choice
   if (!tool_choice) {
-    const result = await withTimeout(tracedGenerate({
+    const response = await tracedGenerate({
       messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userMsg }],
       intelligence, schema: output_schema
-    }), TIMEOUT_MS);
-    return { result };
+    });
+    return { result: response.result };
   }
 
   // Multi-turn with tools
@@ -225,20 +225,21 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
   const addToolResult = (id, content) => conversation.push({ role: 'tool', tool_call_id: id, content: JSON.stringify(content) });
 
   for (let turn = 0; turn < max_iterations; turn++) {
-    const response = await withTimeout(tracedGenerate({ messages: conversation, intelligence, tools }, turn, max_iterations), TIMEOUT_MS);
+    const response = await tracedGenerate({ messages: conversation, intelligence, tools }, turn, max_iterations);
+    const message = response.result;
 
-    if (!response.tool_calls?.length) {
-      traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: response.content }));
+    if (!message.tool_calls?.length) {
+      traceWritePromises.push(tracer.traceWarning(actionUUID, stepIndex, 'LLM returned text instead of tool call', { content: message.content }));
       getActionStatsCounter().increment(actionName, 'errors').catch(() => {});
       getActionStatsCounter().increment(actionName, 'textInsteadOfTool').catch(() => {});
-      conversation.push({ role: 'assistant', content: response.content });
+      conversation.push({ role: 'assistant', content: message.content });
       conversation.push({ role: 'user', content: 'Please call one of the available tools to proceed. Use FINAL_RESPONSE if complete or if data is gathered and needs formatting or extraction.' });
       continue;
     }
 
-    conversation.push({ role: 'assistant', content: null, tool_calls: response.tool_calls });
+    conversation.push({ role: 'assistant', content: null, tool_calls: message.tool_calls });
 
-    for (const call of response.tool_calls) {
+    for (const call of message.tool_calls) {
       const toolName = call.function.name;
       // Track which tool was chosen by this action
       getActionStatsCounter().increment(actionName, `choice:${toolName}`).catch(() => {});
@@ -299,7 +300,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
 function createTracedGenerate(generateFn, actionUUID, stepIndex, traceWritePromises) {
   return async function tracedGenerate(options, turn = null, maxTurns = null) {
     const startTime = performance.now();
-    let result, error;
+    let response, error;
 
     const onModelError = ({ endpoint, model, openrouterProvider, error: errMsg, phase }) => {
       const modelName = openrouterProvider ? `${model}@${openrouterProvider}` : `${endpoint}/${model}`;
@@ -307,7 +308,7 @@ function createTracedGenerate(generateFn, actionUUID, stepIndex, traceWritePromi
     };
 
     try {
-      result = await generateFn({ ...options, onModelError });
+      response = await generateFn({ ...options, onModelError });
     } catch (err) {
       error = err;
     }
@@ -322,10 +323,10 @@ function createTracedGenerate(generateFn, actionUUID, stepIndex, traceWritePromi
       ? options.messages.map(formatMessage).join('\n')
       : options.prompt || '';
 
-    traceWritePromises.push(tracer.traceLLM(actionUUID, stepIndex, result?.model || 'unknown', promptStr, result, duration, turn, maxTurns, error));
+    traceWritePromises.push(tracer.traceLLM(actionUUID, stepIndex, response?.model || 'unknown', promptStr, response, duration, turn, maxTurns, error));
 
     if (error) throw error;
-    return result;
+    return response;
   };
 }
 

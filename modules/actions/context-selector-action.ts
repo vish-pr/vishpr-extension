@@ -136,10 +136,3 @@ Return a single combined context block with only the relevant parts, or empty st
   ]
 };
 
-// =============================================================================
-// Exports
-// =============================================================================
-
-export const contextSelectorActions: Action[] = [
-  CONTEXT_SELECTOR_ACTION
-];

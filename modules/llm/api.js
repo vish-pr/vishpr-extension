@@ -4,6 +4,23 @@
 
 import { resolveEndpoint, getEndpoints } from './endpoints.js';
 
+const CALL_TIMEOUT_MS = 10000;
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function callOpenAICompatible({ endpoint, model, messages, tools, schema, openrouterProvider, noToolChoice }) {
   const endpoints = await getEndpoints();
   const config = resolveEndpoint(endpoint, endpoints);
@@ -28,11 +45,11 @@ export async function callOpenAICompatible({ endpoint, model, messages, tools, s
     request.provider = { only: [openrouterProvider] };
   }
 
-  const response = await fetch(config.url, {
+  const response = await fetchWithTimeout(config.url, {
     method: 'POST',
     headers: config.headers,
     body: JSON.stringify(request)
-  });
+  }, CALL_TIMEOUT_MS);
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -52,13 +69,13 @@ export async function callOpenAICompatible({ endpoint, model, messages, tools, s
   if (schema && message.content) {
     try {
       const parsed = JSON.parse(message.content);
-      return { ...parsed, usage: data.usage, model: data.model };
+      return { result: parsed, usage: data.usage, model: data.model };
     } catch (e) {
       throw new Error(`Invalid JSON in schema response: ${e.message}`);
     }
   }
 
-  return { ...message, usage: data.usage, model: data.model };
+  return { result: message, usage: data.usage, model: data.model };
 }
 
 export async function verifyModel(endpointName, modelId, openrouterProvider = null) {

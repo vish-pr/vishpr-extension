@@ -210,13 +210,14 @@ const unwrapCustomElements = (root: Element) => {
 
 const cleanUrl = (href: string, keepParams: string[]): string => {
   try {
+    const isRelative = !href.includes('://');
     const url = new URL(href, 'http://example.com');
     const params = new URLSearchParams();
     for (const p of keepParams) {
       if (url.searchParams.has(p)) params.set(p, url.searchParams.get(p)!);
     }
-    let clean = url.origin + url.pathname;
     const paramStr = params.toString();
+    let clean = isRelative ? url.pathname : url.origin + url.pathname;
     if (paramStr) clean += '?' + paramStr;
     if (url.hash) clean += url.hash;
     return clean;

@@ -301,4 +301,3 @@ NEVER include skip/cancel/other options.`,
   ]
 };
 
-export const clarificationActions: Action[] = [USER_CLARIFICATION_ACTION];

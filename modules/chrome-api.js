@@ -31,9 +31,11 @@ class ChromeAPI {
     this.tabs = new Map();
     this.tabErrors = new Map(); // Store network errors per tab
     this._lastActivatedTabId = null; // Track last tab activated by extension (for script execution)
+    this._pendingNavigation = new Map(); // Map<tabId, 'back' | 'forward'> - tracks navigation intent
     this._readyPromise = null;
     this._initTabListeners();
     this._initErrorListener();
+    this._initNavListeners();
   }
 
   async _persistState() {
@@ -140,6 +142,29 @@ class ChromeAPI {
     return (error && Date.now() - error.timestamp < 30000) ? error.error : null;
   }
 
+  _initNavListeners() {
+    // Detect user-initiated back/forward navigation via browser UI
+    chrome.webNavigation.onCommitted.addListener((details) => {
+      if (details.frameId !== 0) return; // Only main frame
+
+      const { tabId, url, transitionQualifiers } = details;
+
+      // Detect browser UI back/forward navigation
+      if (transitionQualifiers && transitionQualifiers.includes('forward_back')) {
+        const tab = this.tabs.get(tabId);
+        if (tab && !this._pendingNavigation.has(tabId)) {
+          // Infer direction by matching URL to neighbors in history
+          if (tab.historyIndex > 0 && tab.history[tab.historyIndex - 1]?.url === url) {
+            this._pendingNavigation.set(tabId, 'back');
+          } else if (tab.historyIndex < tab.history.length - 1 &&
+                     tab.history[tab.historyIndex + 1]?.url === url) {
+            this._pendingNavigation.set(tabId, 'forward');
+          }
+        }
+      }
+    });
+  }
+
   async _initCurrentTab() {
     this._readyPromise = this._loadAllTabs();
   }
@@ -161,7 +186,8 @@ class ChromeAPI {
         windowId,
         openedAt: now,
         lastVisitedAt: now,
-        urlHistory: [{ url, timestamp: now }],
+        history: [{ url, timestamp: now }],
+        historyIndex: 0,
         content: { raw: null, cleaned: null, summary: null }
       });
     } else {
@@ -169,10 +195,54 @@ class ChromeAPI {
       if (windowId !== undefined) tab.windowId = windowId;
       if (tab.url !== url) {
         tab.url = url;
-        tab.urlHistory = [...tab.urlHistory, { url, timestamp: now }].slice(-5);
+        this._updateHistory(tab, url, now);
       }
     }
     return this.tabs.get(tabId);
+  }
+
+  /**
+   * Update history stack based on navigation intent
+   * @param {object} tab - Tab state object
+   * @param {string} url - New URL
+   * @param {string} timestamp - ISO timestamp
+   */
+  _updateHistory(tab, url, timestamp) {
+    const direction = this._pendingNavigation.get(tab.tabId);
+    this._pendingNavigation.delete(tab.tabId);
+
+    if (direction === 'back' && tab.historyIndex > 0) {
+      tab.historyIndex--;
+    } else if (direction === 'forward' && tab.historyIndex < tab.history.length - 1) {
+      tab.historyIndex++;
+    } else {
+      // New navigation - clear forward entries, append new
+      tab.history = tab.history.slice(0, tab.historyIndex + 1);
+      tab.history.push({ url, timestamp });
+      tab.historyIndex = tab.history.length - 1;
+      // Limit to 50 entries
+      if (tab.history.length > 50) {
+        const excess = tab.history.length - 50;
+        tab.history = tab.history.slice(excess);
+        tab.historyIndex -= excess;
+      }
+    }
+  }
+
+  /**
+   * Get navigation status for a tab
+   * @param {number} tabId
+   * @returns {{ canGoBack: boolean, canGoForward: boolean, historyLength: number, historyIndex: number }}
+   */
+  getNavigationStatus(tabId) {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return { canGoBack: false, canGoForward: false, historyLength: 0, historyIndex: -1 };
+    return {
+      canGoBack: tab.historyIndex > 0,
+      canGoForward: tab.historyIndex < tab.history.length - 1,
+      historyLength: tab.history.length,
+      historyIndex: tab.historyIndex
+    };
   }
 
   // --- Content Storage ---
@@ -194,10 +264,29 @@ class ChromeAPI {
     const currentTab = this.tabs.get(currentTabId);
 
     lines.push(`Current Tab: ${currentTabId} - ${currentTabUrl || 'unknown'}`);
-    if (currentTab && currentTab.urlHistory.length > 1) {
-      lines.push('History:');
-      const history = currentTab.urlHistory.slice(-3, -1).reverse();
-      history.forEach((e, i) => lines.push(`  ${i + 1}. ${e.url} (${e.timestamp})`));
+
+    if (currentTab && currentTab.history.length > 1) {
+      const nav = this.getNavigationStatus(currentTabId);
+      lines.push(`Navigation: canGoBack=${nav.canGoBack}, canGoForward=${nav.canGoForward}`);
+
+      if (nav.canGoBack) {
+        lines.push('Back History:');
+        // Show up to 3 previous entries
+        const backStart = Math.max(0, nav.historyIndex - 3);
+        for (let i = nav.historyIndex - 1; i >= backStart; i--) {
+          const entry = currentTab.history[i];
+          lines.push(`  ${nav.historyIndex - i}. ${entry.url}`);
+        }
+      }
+      if (nav.canGoForward) {
+        lines.push('Forward History:');
+        // Show up to 3 forward entries
+        const forwardEnd = Math.min(currentTab.history.length - 1, nav.historyIndex + 3);
+        for (let i = nav.historyIndex + 1; i <= forwardEnd; i++) {
+          const entry = currentTab.history[i];
+          lines.push(`  ${i - nav.historyIndex}. ${entry.url}`);
+        }
+      }
     }
 
     const otherTabs = windowTabs
@@ -399,19 +488,75 @@ class ChromeAPI {
   }
 
   async navigateTo(tabId, url) {
-    const validatedUrl = url.match(/^https?:\/\//) ? url : 'https://' + url;
+    let validatedUrl;
+    if (url.match(/^https?:\/\//)) {
+      validatedUrl = url;
+    } else if (url.startsWith('/')) {
+      // Relative URL - resolve against current tab's origin
+      const tab = await chrome.tabs.get(tabId);
+      const base = new URL(tab.url);
+      validatedUrl = base.origin + url;
+    } else {
+      validatedUrl = 'https://' + url;
+    }
     await chrome.tabs.update(tabId, { url: validatedUrl });
     await new Promise(r => setTimeout(r, 500));
     this._ensureTab(tabId, validatedUrl);
     return { navigated: true, new_url: validatedUrl };
   }
 
+  async switchTab(tabId) {
+    await chrome.tabs.update(tabId, { active: true });
+    this._lastActivatedTabId = tabId;
+    return { switched: true, tabId };
+  }
+
+  async openInNewTab(url, active = true) {
+    let validatedUrl;
+    if (url.match(/^https?:\/\//)) {
+      validatedUrl = url;
+    } else if (url.startsWith('/')) {
+      // Relative URL - resolve against current active tab's origin
+      const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (currentTab?.url) {
+        const base = new URL(currentTab.url);
+        validatedUrl = base.origin + url;
+      } else {
+        validatedUrl = 'https://' + url;
+      }
+    } else {
+      validatedUrl = 'https://' + url;
+    }
+    const tab = await chrome.tabs.create({ url: validatedUrl, active });
+    this._ensureTab(tab.id, validatedUrl, tab.windowId);
+    return { created: true, tabId: tab.id, url: validatedUrl };
+  }
+
   async _navigate(tabId, direction) {
+    const tabState = this.tabs.get(tabId);
+
+    // Pre-check if navigation is possible
+    if (tabState) {
+      if (direction === 'back' && tabState.historyIndex <= 0) {
+        const nav = this.getNavigationStatus(tabId);
+        return { navigated: false, direction, error: 'Cannot go back - at beginning of history', ...nav };
+      }
+      if (direction === 'forward' && tabState.historyIndex >= tabState.history.length - 1) {
+        const nav = this.getNavigationStatus(tabId);
+        return { navigated: false, direction, error: 'Cannot go forward - at end of history', ...nav };
+      }
+    }
+
+    // Set pending navigation intent before Chrome API call
+    this._pendingNavigation.set(tabId, direction);
+
     await (direction === 'back' ? chrome.tabs.goBack(tabId) : chrome.tabs.goForward(tabId));
     await new Promise(r => setTimeout(r, 500));
     const tab = await chrome.tabs.get(tabId);
     if (tab?.url) this._ensureTab(tabId, tab.url);
-    return { navigated: true, direction };
+
+    const nav = this.getNavigationStatus(tabId);
+    return { navigated: true, direction, url: tab?.url, ...nav };
   }
 
   async goBack(tabId) { return this._navigate(tabId, 'back'); }
