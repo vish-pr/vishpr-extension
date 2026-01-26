@@ -93,8 +93,6 @@ async function waitForResponseStep(ctx: StepContext): Promise<StepResult> {
   };
 }
 
-export const USER_CLARIFICATION = 'USER_CLARIFICATION';
-
 // Input/output types
 interface Question {
   question: string;
@@ -256,8 +254,8 @@ Context: User preferences KB says "prefers fast delivery"
 - Scores must sum to roughly 100 (±10)`;
 
 // Action definition
-export const userClarificationAction: Action = {
-  name: USER_CLARIFICATION,
+export const USER_CLARIFICATION_ACTION: Action = {
+  name: 'USER_CLARIFICATION',
   description: 'Request user clarification with intelligent defaults. Generates options from context, ranks by predicted preference, shows overlay UI with countdown timer, and auto-selects best guess on timeout.',
   examples: [
     'Ask user which format they prefer',
@@ -303,4 +301,4 @@ NEVER include skip/cancel/other options.`,
   ]
 };
 
-export const clarificationActions: Action[] = [userClarificationAction];
+export const clarificationActions: Action[] = [USER_CLARIFICATION_ACTION];

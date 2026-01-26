@@ -5,7 +5,8 @@
  * These tests validate runtime constraints that TS cannot check.
  */
 import Mustache from 'mustache';
-import { actionsRegistry, BROWSER_ROUTER } from './index.js';
+import { actionsRegistry } from './index.js';
+import { ROUTER_ACTION } from './router-action.js';
 import type { Action, LLMStep, ActionStep } from './types/index.js';
 import { getKnownContextVars } from './context-provider.js';
 
@@ -33,7 +34,7 @@ const extractVars = (str: string): Set<string> => {
 };
 
 // Verify entry point action exists
-assert(!!actionsRegistry[BROWSER_ROUTER], `BROWSER_ROUTER not found`);
+assert(!!actionsRegistry[ROUTER_ACTION.name], `ROUTER_ACTION not found`);
 
 for (const [name, action] of Object.entries(actionsRegistry) as [string, Action][]) {
   // Registry key must match action name

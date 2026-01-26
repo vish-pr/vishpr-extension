@@ -62,9 +62,8 @@ A Chrome extension that automates web browsing through natural language commands
 ### Commands
 
 ```bash
-npm run build      # Production build
+npm run build      # Production build and test
 npm run package    # Build and create release ZIP
-npm test           # Run tests
 npm run typecheck  # TypeScript type checking
 ```
 

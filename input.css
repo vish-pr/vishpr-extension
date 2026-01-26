@@ -5,201 +5,84 @@
 
 @source "./**/*.{html,js}";
 
-/* ==========================================================================
-   Design Tokens - Minimal & Consistent
-   ========================================================================== */
-
+/* Design Tokens */
 @theme {
-  /* Two fonts only */
   --font-sans: 'Outfit', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
-/* ==========================================================================
-   Accessibility - Focus States
-   ========================================================================== */
+/* Accessibility - Focus States */
 
-:focus-visible {
-  @apply outline-2 outline-offset-2 outline-primary;
-}
+:focus-visible { @apply outline-2 outline-offset-2 outline-primary; }
+.btn:focus-visible { @apply ring-2 ring-primary ring-offset-2 ring-offset-base-100; }
+.input:focus-visible, .textarea:focus-visible, .select:focus-visible { @apply ring-2 ring-primary ring-offset-1 border-primary; }
+.tab:focus-visible { @apply ring-2 ring-primary ring-offset-1; }
+.trace-header:focus-visible, .state-block-header:focus-visible { @apply ring-2 ring-primary ring-inset; }
 
-.btn:focus-visible {
-  @apply ring-2 ring-primary ring-offset-2 ring-offset-base-100;
-}
-
-.input:focus-visible,
-.textarea:focus-visible,
-.select:focus-visible {
-  @apply ring-2 ring-primary ring-offset-1 border-primary;
-}
-
-.tab:focus-visible {
-  @apply ring-2 ring-primary ring-offset-1;
-}
-
-.trace-header:focus-visible,
-.state-block-header:focus-visible {
-  @apply ring-2 ring-primary ring-inset;
-}
-
-/* Screen reader only utility */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
-}
-
-/* Semantic text opacity tokens for accessibility */
+/* Screen reader only */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
 .text-muted { @apply text-base-content/70; }
 .text-subtle { @apply text-base-content/60; }
 
-/* ==========================================================================
-   Reduced Motion Support
-   ========================================================================== */
-
+/* Reduced Motion */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-
-  .loading,
-  .animate-pulse,
-  .animate-ping {
-    animation: none !important;
-  }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .loading, .animate-pulse, .animate-ping { animation: none !important; }
 }
 
-/* ==========================================================================
-   Touch Target Sizing
-   ========================================================================== */
-
+/* Touch Targets */
 @media (pointer: coarse) {
-  .btn-xs,
-  .btn-sm {
-    @apply min-h-11 min-w-11;
-  }
-
-  .tab {
-    @apply min-h-11 px-4;
-  }
-
-  .clarification-option {
-    @apply min-h-12 py-3;
-  }
+  .btn-xs, .btn-sm { @apply min-h-11 min-w-11; }
+  .tab { @apply min-h-11 px-4; }
+  .clarification-option { @apply min-h-12 py-3; }
 }
 
-/* ==========================================================================
-   Minimal Animations (only what's needed)
-   ========================================================================== */
+/* Animations */
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(0.25rem); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeSlideOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-0.25rem); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-@keyframes fadeSlideIn {
-  from { opacity: 0; transform: translateY(0.25rem); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes fadeSlideOut {
-  from { opacity: 1; transform: translateY(0); }
-  to { opacity: 0; transform: translateY(-0.25rem); }
-}
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* ==========================================================================
-   Base Layout
-   ========================================================================== */
-
+/* Base Layout */
 html, body { @apply h-full overflow-hidden; }
 body { @apply flex flex-col; }
 
-/* ==========================================================================
-   Status Indicators - Extend DaisyUI
-   ========================================================================== */
-
+/* Status Indicators */
 .status { @apply size-2 rounded-full bg-base-content/30; }
-.status-success { @apply bg-success; }
+.status-success, .status.active { @apply bg-success; }
 .status-error { @apply bg-error; }
-.status.active { @apply bg-success; }
 .status-idle { @apply bg-base-content/15; }
 .status-verifying { @apply animate-pulse bg-warning; }
 
-/* ==========================================================================
-   Chat - Use DaisyUI chat components
-   ========================================================================== */
-
+/* Chat */
 .message { animation: fadeSlideIn 0.2s ease; }
+.chat-start .chat-bubble:not(.chat-bubble-error) { @apply bg-base-300 text-base-content/80; }
+.chat-bubble code { @apply px-1 py-px rounded font-mono text-[0.85em] bg-base-content/10; }
+.chat-bubble-error { @apply bg-error/10 border-l-2 border-error; }
+.chat-bubble-error .error-content { @apply font-mono text-xs leading-relaxed break-words text-error/80; }
 
-/* Assistant bubble - subtle background */
-.chat-start .chat-bubble:not(.chat-bubble-error) {
-  @apply bg-base-300 text-base-content/80;
-}
-
-/* Code in bubbles */
-.chat-bubble code {
-  @apply px-1 py-px rounded font-mono text-[0.85em] bg-base-content/10;
-}
-
-/* Error messages */
-.chat-bubble-error {
-  @apply bg-error/10 border-l-2 border-error;
-}
-.chat-bubble-error .error-content {
-  @apply font-mono text-xs leading-relaxed break-words text-error/80;
-}
-
-/* ==========================================================================
-   Status Whispers - Minimal
-   ========================================================================== */
-
+/* Status Whispers */
 .status-whisper-container { @apply sticky top-0 z-10 flex flex-col gap-1 py-2; }
-
-.status-whisper {
-  @apply flex items-start gap-2 py-1 font-mono text-xs text-base-content/50;
-  animation: fadeSlideIn 0.3s ease;
-}
+.status-whisper { @apply flex items-start gap-2 py-1 font-mono text-xs text-base-content/50; animation: fadeSlideIn 0.3s ease; }
 .status-whisper.success { @apply text-success/70; }
 .status-whisper.error { @apply text-error/70; }
 .status-whisper.info { @apply text-info/70; }
 .status-whisper.dismissing { animation: fadeSlideOut 0.3s ease forwards; }
-
 .status-dot-indicator { @apply shrink-0 size-1 mt-1 rounded-full bg-current opacity-50 animate-pulse; }
 .status-whisper:is(.success, .error) .status-dot-indicator { @apply animate-none; }
 .status-text { @apply opacity-50 leading-snug; }
 
-/* ==========================================================================
-   Settings - Use DaisyUI tabs & cards
-   ========================================================================== */
-
+/* Settings */
 .settings-tabs .tab svg { @apply opacity-50; }
 .settings-tabs .tab.tab-active svg { @apply opacity-100; }
-
-/* Model drag and drop */
 .model-draggable { @apply cursor-grab transition-colors hover:bg-base-content/5 active:cursor-grabbing; }
 .sortable-ghost { @apply opacity-50; }
 .sortable-chosen { @apply bg-base-300; }
 .sortable-drag { @apply shadow-lg; }
-
-/* Model autocomplete - escape overflow */
 #modelsBody .dropdown-content { @apply z-[9999] fixed; }
 
-/* ==========================================================================
-   Stats - Use DaisyUI components
-   ========================================================================== */
-
+/* Stats */
 .stats-summary { @apply bg-gradient-to-br from-base-300 to-base-200; }
 .radial-progress { --thickness: 3px; @apply bg-base-content/10; }
-
-/* Action stat cards */
 .action-stat-card { @apply transition-colors hover:border-base-content/15; }
 .action-card-header { @apply select-none; }
 .action-stat-card.expanded .action-expand-icon { @apply rotate-180; }
@@ -207,38 +90,21 @@ body { @apply flex flex-col; }
 .skip-bar-track { @apply min-h-1; }
 .anomaly-badge { @apply tabular-nums; }
 
-/* ==========================================================================
-   Debug Panel - Terminal Aesthetic
-   ========================================================================== */
+/* Debug Panel */
+#debugContainer { --dbg-action: theme('colors.blue.500'); --dbg-llm: theme('colors.violet.500'); --dbg-chrome: theme('colors.amber.500'); --dbg-context: theme('colors.emerald.500'); --dbg-function: theme('colors.indigo.500'); @apply font-mono text-xs; }
 
-#debugContainer {
-  --dbg-action: theme('colors.blue.500');
-  --dbg-llm: theme('colors.violet.500');
-  --dbg-chrome: theme('colors.amber.500');
-  --dbg-context: theme('colors.emerald.500');
-  --dbg-function: theme('colors.indigo.500');
-  @apply font-mono text-xs;
-}
-
-/* Trace nodes */
 .trace-node { @apply mb-1; }
 .trace-node.expanded > .trace-header .trace-toggle { @apply rotate-90; }
-.trace-node.expanded > .trace-details { @apply block; }
-.trace-node.expanded > .trace-children { @apply block; }
-
+.trace-node.expanded > .trace-details, .trace-node.expanded > .trace-children { @apply block; }
 .trace-header { @apply flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-base-content/5; }
 .trace-toggle { @apply text-xs opacity-30 transition-transform w-3; }
-
-/* Node icons */
 .trace-icon { @apply w-5 h-5 rounded flex items-center justify-center text-xs font-bold shrink-0; }
 .trace-icon-action { background: color-mix(in oklch, var(--dbg-action) 15%, transparent); color: var(--dbg-action); }
-.trace-icon-step { @apply bg-base-content/10 text-base-content/60; }
+.trace-icon-step, .trace-icon-iteration { @apply bg-base-content/10 text-base-content/60; }
 .trace-icon-llm { background: color-mix(in oklch, var(--dbg-llm) 15%, transparent); color: var(--dbg-llm); }
 .trace-icon-chrome { background: color-mix(in oklch, var(--dbg-chrome) 15%, transparent); color: var(--dbg-chrome); }
 .trace-icon-context { background: color-mix(in oklch, var(--dbg-context) 15%, transparent); color: var(--dbg-context); }
 .trace-icon-function { background: color-mix(in oklch, var(--dbg-function) 15%, transparent); color: var(--dbg-function); }
-.trace-icon-iteration { @apply bg-base-content/10 text-base-content/50; }
-
 .trace-name { @apply flex-1 font-medium truncate; }
 .trace-type { @apply text-xs opacity-50 px-1.5 py-0.5 rounded bg-base-content/10; }
 .trace-timing { @apply text-xs opacity-40 font-mono; }
@@ -246,18 +112,12 @@ body { @apply flex flex-col; }
 .trace-status-error { @apply text-error; }
 .trace-status-running { @apply text-warning animate-pulse; }
 .trace-status-skipped { @apply opacity-50; }
-
-/* Trace details */
 .trace-details { @apply hidden ml-5 pl-3 py-2 space-y-2 text-xs border-l-2 border-base-content/10; }
 .trace-detail-row { @apply flex gap-3; }
 .trace-detail-label { @apply w-16 shrink-0 opacity-50 uppercase text-xs tracking-wide pt-0.5; }
 .trace-detail-value { @apply flex-1 min-w-0 relative; }
 .trace-detail-value pre { @apply whitespace-pre-wrap break-words p-2 rounded bg-base-300 overflow-auto max-h-48; }
-
-/* LLM Reasoning */
 .llm-reasoning { @apply whitespace-pre-wrap break-words p-3 rounded bg-base-300 border-l-[3px] border-primary italic leading-relaxed overflow-auto max-h-64; }
-
-/* Tool calls */
 .tool-calls-container { @apply flex flex-col gap-1; }
 .tool-call-inline { @apply rounded border border-base-content/10; }
 .tool-call-summary { @apply flex items-center gap-1 px-2 py-1.5 text-xs cursor-pointer bg-base-300 hover:bg-base-content/10; }
@@ -268,10 +128,7 @@ body { @apply flex flex-col; }
 .tool-call-id { @apply ml-auto text-xs opacity-40 font-mono; }
 .tool-call-args { @apply hidden whitespace-pre-wrap break-words p-2 text-xs bg-base-200 border-t border-base-content/10 overflow-auto max-h-48; }
 .tool-call-inline[data-expanded="true"] .tool-call-args { @apply block; }
-
 .trace-children { @apply hidden pl-4; }
-
-/* Collapsible blocks */
 .trace-collapsible { @apply rounded border border-base-content/10 overflow-hidden; }
 .trace-collapsible-header { @apply flex items-center gap-2 px-2 py-1.5 cursor-pointer bg-base-300 hover:bg-base-content/10; }
 .trace-collapsible-toggle { @apply text-xs transition-transform text-base-content/50; }
@@ -279,31 +136,20 @@ body { @apply flex flex-col; }
 .trace-collapsible-size { @apply text-xs font-mono px-1.5 py-0.5 rounded bg-base-content/10 text-base-content/60; }
 .trace-collapsible-preview, .trace-collapsible-full { @apply whitespace-pre-wrap break-words p-2 text-xs bg-base-200 max-h-[60vh] overflow-auto; }
 .trace-collapsible[data-collapsed="true"] .trace-collapsible-preview { @apply block; }
-.trace-collapsible[data-collapsed="true"] .trace-collapsible-full { @apply hidden; }
-.trace-collapsible[data-collapsed="false"] .trace-collapsible-preview { @apply hidden; }
+.trace-collapsible[data-collapsed="true"] .trace-collapsible-full, .trace-collapsible[data-collapsed="false"] .trace-collapsible-preview { @apply hidden; }
 .trace-collapsible[data-collapsed="false"] .trace-collapsible-full { @apply block; }
 
-/* ==========================================================================
-   Timeline - Stacked Blocks
-   ========================================================================== */
-
+/* Timeline */
 #debugTimeline { @apply p-2 bg-gradient-to-b from-base-100 to-base-200/50; }
-
-/* Empty/loading states */
 .debug-empty-state { @apply flex flex-col items-center justify-center h-full py-16; }
 .debug-empty-icon { @apply text-4xl opacity-10 mb-3 font-mono; }
 .debug-empty-text { @apply text-xs opacity-30 uppercase tracking-widest; }
-
 .timeline-running { @apply flex items-center gap-4 p-4; }
 .timeline-running-pulse { @apply w-3 h-3 rounded-full bg-warning animate-ping; }
 .timeline-running-text { @apply text-xs uppercase tracking-wider opacity-60; }
-
-/* Error block */
 .timeline-error-block { @apply flex items-start gap-3 p-4 m-2 rounded-lg bg-error/10 border border-error/30; }
 .timeline-error-icon { @apply text-lg font-bold shrink-0 text-error; }
 .timeline-error-msg { @apply text-xs break-words text-error/80; }
-
-/* Timeline blocks */
 .timeline-block { @apply mb-3 rounded-lg border border-base-content/10 shadow-md overflow-hidden; }
 .timeline-block-header { @apply flex items-center gap-2 px-3 py-2 bg-base-200 border-b border-base-content/10; }
 .timeline-block-icon { @apply text-sm font-bold; }
@@ -316,21 +162,17 @@ body { @apply flex flex-col; }
 .timeline-loading-indicator { @apply w-2 h-2 rounded-full bg-primary animate-pulse; }
 .timeline-block-content { @apply p-2 bg-base-100; }
 
-/* Critique blocks */
+/* Critique */
 .critique-generating { @apply text-xs text-center py-4 opacity-40; }
 .critique-summary-block { @apply p-3 mb-3 rounded text-xs leading-relaxed bg-base-300 border-l-2 border-primary; }
 .critique-recommendations-block { @apply mb-4 p-3 rounded bg-base-200/50; }
 .critique-recs-title { @apply text-xs font-bold uppercase tracking-widest mb-2 text-warning; }
 .critique-recs-list { @apply list-decimal list-inside space-y-1 text-xs text-base-content/80; }
-
-/* Critique sections */
 .critique-section { @apply mb-3; }
 .critique-section-header { @apply flex items-center gap-2 mb-2 pb-1 border-b border-dashed border-base-content/10; }
 .critique-section-icon { @apply text-xs opacity-50; }
 .critique-section-title { @apply text-xs font-bold uppercase tracking-widest flex-1 text-base-content/50; }
 .critique-section-count { @apply text-xs font-mono px-1.5 rounded bg-base-content/10 text-base-content/60; }
-
-/* Critique items */
 .critique-section-items { @apply space-y-2; }
 .critique-item { @apply p-3 rounded text-xs border-l-[3px]; }
 .critique-item-high { @apply border-error bg-error/5; }
@@ -346,49 +188,30 @@ body { @apply flex flex-col; }
 .critique-item-suggestion { @apply text-xs italic pt-2 mt-2 text-base-content/60 border-t border-dashed border-base-content/10; }
 .critique-item-suggestion::before { content: "→ "; @apply text-success not-italic; }
 
-/* ==========================================================================
-   Clarification Overlay - Use DaisyUI modal
-   ========================================================================== */
-
+/* Clarification Overlay */
 .clarification-panel { @apply relative p-0 overflow-visible max-w-sm; }
-
-/* Timer bar */
 .clarification-lifeline { @apply flex items-center gap-3 px-4 py-3 border-b border-base-content/10; }
 .lifeline-track { @apply flex-1 h-1.5 bg-base-content/10 rounded-full overflow-hidden; }
 .lifeline-fill { @apply h-full bg-primary rounded-full transition-all duration-100; width: 100%; }
 .lifeline-time { @apply font-mono text-sm tabular-nums text-base-content/60; }
 .lifeline-time .timer-seconds { @apply text-primary font-semibold; }
-
-/* Urgency states */
 .clarification-panel[data-urgency="warning"] .lifeline-fill { @apply bg-warning; }
 .clarification-panel[data-urgency="warning"] .timer-seconds { @apply text-warning; }
 .clarification-panel[data-urgency="critical"] .lifeline-fill { @apply bg-error animate-pulse; }
 .clarification-panel[data-urgency="critical"] .timer-seconds { @apply text-error; }
-
-/* Question */
 .clarification-question { @apply px-4 pt-4 pb-2 text-center; }
 .clarification-question .question-text { @apply text-base font-semibold text-base-content m-0 leading-snug; }
 .clarification-question .question-context { @apply text-xs text-base-content/50 mt-1; }
 .clarification-question .question-context:empty { @apply hidden; }
-
-/* Options */
 .clarification-options-wrap { @apply px-4 py-2; }
 .options-status { @apply flex items-center justify-between mb-2; }
 .options-status .options-label { @apply text-xs font-medium text-base-content/40 uppercase tracking-wide; }
 .clarification-options { @apply flex flex-col gap-2; }
-
-/* Skeletons */
 .option-skeleton { @apply skeleton h-12 rounded-lg; }
 .option-skeleton:nth-child(2) { animation-delay: 0.1s; }
 .option-skeleton:nth-child(3) { animation-delay: 0.2s; }
 .clarification-options.loaded .option-skeleton { @apply hidden; }
-
-/* Option buttons */
-.clarification-option {
-  @apply btn btn-outline border-base-content/15;
-  animation: fadeSlideIn 0.2s ease forwards;
-  opacity: 0;
-}
+.clarification-option { @apply btn btn-outline border-base-content/15; animation: fadeSlideIn 0.2s ease forwards; opacity: 0; }
 .clarification-option:nth-child(4) { animation-delay: 0.03s; }
 .clarification-option:nth-child(5) { animation-delay: 0.06s; }
 .clarification-option:nth-child(6) { animation-delay: 0.09s; }
@@ -397,74 +220,34 @@ body { @apply flex flex-col; }
 .clarification-option.recommended { @apply btn-primary; }
 .clarification-option.recommended .option-rank { @apply bg-primary-content/20 text-primary-content; }
 .clarification-option.selected { @apply btn-success; }
-
-/* Custom input */
 .clarification-custom { @apply px-4 pb-4; }
-
-/* Progress dots */
 .clarification-progress { @apply flex justify-center gap-2 py-3; }
 .clarification-progress:empty { @apply hidden; }
 .clarification-progress .dot { @apply w-2 h-2 rounded-full bg-base-content/20 transition-all; }
 .clarification-progress .dot.active { @apply w-6 rounded bg-primary; }
 .clarification-progress .dot.completed { @apply bg-success; }
-
-/* Hint & paused */
 .clarification-hint { @apply px-4 pb-3; }
 .clarification-paused { @apply absolute -top-3 left-1/2 -translate-x-1/2 z-10; }
 
-/* ==========================================================================
-   Content Maximizer - Fullscreen Viewer
-   ========================================================================== */
-
-.content-maximize-btn {
-  @apply absolute top-1.5 right-1.5 w-6 h-6 rounded flex items-center justify-center;
-  @apply opacity-0 transition-all cursor-pointer z-10;
-  @apply bg-base-300 border border-base-content/15 text-base-content/50;
-  @apply hover:bg-base-content/15 hover:text-base-content/90 hover:scale-110 active:scale-95;
-}
-.trace-detail-value:hover .content-maximize-btn,
-.tool-call-inline:hover .content-maximize-btn { @apply opacity-100; }
-
-/* Maximizer overlay */
-.maximizer-overlay {
-  @apply fixed inset-0 z-[9999] flex items-center justify-center p-4;
-  @apply bg-black/85 backdrop-blur-sm;
-  animation: fadeIn 0.2s ease;
-}
+/* Content Maximizer */
+.content-maximize-btn { @apply absolute top-1.5 right-1.5 w-6 h-6 rounded flex items-center justify-center opacity-0 transition-all cursor-pointer z-10 bg-base-300 border border-base-content/15 text-base-content/50 hover:bg-base-content/15 hover:text-base-content/90 hover:scale-110 active:scale-95; }
+.trace-detail-value:hover .content-maximize-btn, .tool-call-inline:hover .content-maximize-btn { @apply opacity-100; }
+.maximizer-overlay { @apply fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm; animation: fadeIn 0.2s ease; }
 .maximizer-overlay.closing { animation: fadeIn 0.15s ease reverse forwards; }
-
-.maximizer-container {
-  @apply relative flex flex-col w-full h-full max-w-5xl max-h-[90vh] rounded-lg overflow-hidden;
-  @apply bg-base-100 border border-base-content/15 shadow-2xl;
-  animation: fadeSlideIn 0.25s ease;
-}
+.maximizer-container { @apply relative flex flex-col w-full h-full max-w-5xl max-h-[90vh] rounded-lg overflow-hidden bg-base-100 border border-base-content/15 shadow-2xl; animation: fadeSlideIn 0.25s ease; }
 .maximizer-overlay.closing .maximizer-container { animation: fadeSlideIn 0.15s ease reverse forwards; }
-
-.maximizer-header {
-  @apply flex items-center gap-3 px-4 py-3 shrink-0;
-  @apply bg-gradient-to-r from-base-200 to-base-300 border-b border-base-content/10;
-}
+.maximizer-header { @apply flex items-center gap-3 px-4 py-3 shrink-0 bg-gradient-to-r from-base-200 to-base-300 border-b border-base-content/10; }
 .maximizer-header-icon { @apply text-base text-primary; }
 .maximizer-header-label { @apply text-xs font-bold uppercase tracking-[0.2em] flex-1 text-base-content/40 font-mono; }
 .maximizer-header-size { @apply text-xs font-mono px-2 py-0.5 rounded bg-base-content/10 text-base-content/50; }
 .maximizer-close-btn { @apply btn btn-ghost btn-sm btn-square; }
-
 .maximizer-content { @apply flex-1 overflow-auto p-4 bg-base-100; }
 .maximizer-content pre { @apply whitespace-pre-wrap break-words m-0 leading-relaxed font-mono text-xs text-base-content/85; }
+.maximizer-footer { @apply flex items-center justify-center gap-4 px-4 py-2 text-xs shrink-0 bg-base-200 border-t border-base-content/10 text-base-content/40; }
 
-.maximizer-footer {
-  @apply flex items-center justify-center gap-4 px-4 py-2 text-xs shrink-0;
-  @apply bg-base-200 border-t border-base-content/10 text-base-content/40;
-}
-
-/* ==========================================================================
-   State Inspector Tab
-   ========================================================================== */
-
+/* State Inspector */
 .state-loading { @apply flex flex-col items-center justify-center gap-3 py-12; }
 .state-error { @apply p-4 rounded-lg text-center bg-error/10 border border-error/20; }
-
-/* State blocks */
 .state-block { @apply rounded-lg border border-base-content/10 bg-base-100 shadow-md overflow-hidden; }
 .state-block-header { @apply flex items-center gap-2 px-3 py-2.5 cursor-pointer select-none bg-base-200 border-b border-base-content/10 hover:bg-base-300 transition-colors; }
 .state-block-chevron { @apply transition-transform text-base-content/40; }
@@ -479,7 +262,10 @@ body { @apply flex flex-col; }
 .state-block-content { @apply relative p-3 bg-base-100; }
 .state-block.collapsed .state-block-content { @apply hidden; }
 .state-block-value { @apply text-xs leading-relaxed whitespace-pre-wrap break-words font-mono text-base-content/85 max-h-[300px] overflow-y-auto; }
-
-/* Block type accents */
 .state-block-prefs { @apply border-l-[3px] border-violet-500; }
 .state-block-browser { @apply border-l-[3px] border-cyan-500; }
+
+/* Preferences Editor */
+.prefs-editor { @apply space-y-0; }
+.prefs-editor .textarea { @apply leading-relaxed resize-y; min-height: 200px; max-height: 400px; }
+.prefs-edit-btn { @apply ml-2; }

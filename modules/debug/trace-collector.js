@@ -176,11 +176,12 @@ export async function deleteTrace(traceId) {
 // ============ Tracer Functions ============
 
 // Called from startAction only - creates meta for new action
-async function createTraceMeta(traceId, isRoot, name = null) {
+async function createTraceMeta(traceId, isRoot, name = null, input = null) {
+  const inputPreview = getInputPreview(input);
   const db = await getDB();
   await new Promise(r => {
     const tx = db.transaction(META_STORE, 'readwrite');
-    tx.objectStore(META_STORE).put({ traceId, timestamp: Date.now(), status: 'running', isRoot, name });
+    tx.objectStore(META_STORE).put({ traceId, timestamp: Date.now(), status: 'running', isRoot, name, inputPreview });
     tx.oncomplete = r;
   });
   // Cleanup old root traces
@@ -273,6 +274,16 @@ function sanitize(value) {
 
 function sanitizeError(e) { return typeof e === 'string' ? e : e instanceof Error ? { message: e.message, name: e.name } : String(e); }
 
+// Extract first input value for display in history list
+function getInputPreview(input) {
+  if (!input || typeof input !== 'object') return null;
+  const entries = Object.entries(input);
+  if (entries.length === 0) return null;
+  const [, value] = entries[0];
+  const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+  return valueStr.length > 50 ? valueStr.slice(0, 50) + '…' : valueStr;
+}
+
 export const tracer = {
   // traceId is passed in - parent creates composite ID, or null for root
   // Returns { uuid, startTime, writePromise }
@@ -283,7 +294,7 @@ export const tracer = {
     // Track action name for oversized event logging
     setTraceActionName(uuid, name);
     const writePromise = Promise.all([
-      createTraceMeta(uuid, isRoot, name),
+      createTraceMeta(uuid, isRoot, name, input),
       persistEvent(uuid, { type: 'action_start', name, input: sanitize(input), startTime })
     ]);
     return { uuid, startTime, writePromise };

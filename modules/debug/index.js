@@ -8,9 +8,6 @@ import { getChatStatus } from '../chat.js';
 import { getTraces, getTraceById, deleteTrace } from './trace-collector.js';
 import { getBrowserStateBundle } from '../chrome-api.js';
 
-// Storage key for user preferences
-const PREFERENCES_KB_KEY = 'user_preferences_kb';
-
 // SVG icons for consistent rendering
 const ICONS = {
   chevron: '<svg class="size-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 18l6-6-6-6"/></svg>',
@@ -21,6 +18,9 @@ const ICONS = {
   close: '<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
 };
 
+// Node type icons for trace rendering
+const NODE_ICONS = { action: 'A', step: 'S', function: 'F', llm: 'L', chrome: 'C', context: '{}', warning: '!', iteration: '↻' };
+
 // Content length threshold for showing maximize button
 const MAXIMIZE_THRESHOLD = 5000;
 
@@ -30,24 +30,6 @@ function formatKeyValue(obj) {
   return Object.entries(obj)
     .map(([k, v]) => `${k}: ${typeof v === 'string' ? `"${v}"` : JSON.stringify(v)}`)
     .join('\n');
-}
-
-// Format LLM response with separate sections for reasoning, tool_calls, content, and remaining fields
-function formatLLMResponse(outputData) {
-  if (!outputData || typeof outputData !== 'object') {
-    return { reasoning: null, toolCalls: null, content: null, remaining: outputData };
-  }
-
-  const specialFields = ['reasoning', 'tool_calls', 'usage', 'model', 'content'];
-  const reasoning = outputData.reasoning || null;
-  const toolCalls = outputData.tool_calls || null;
-  const content = outputData.content || null;
-
-  // Collect remaining fields (exclude special ones)
-  const remainingEntries = Object.entries(outputData).filter(([k]) => !specialFields.includes(k));
-  const remaining = remainingEntries.length > 0 ? Object.fromEntries(remainingEntries) : null;
-
-  return { reasoning, toolCalls, content, remaining };
 }
 
 // Render tool calls as compact inline items with expandable args
@@ -98,7 +80,8 @@ function findCritiqueResult(trace) {
   return null;
 }
 
-let state = { history: [], selected: -1, tabId: null };
+let state = { history: [], selected: -1 };
+let prefsEditState = { editing: false, originalValue: '' };
 
 export async function initDebug() {
   elements.debugToggle.addEventListener('click', toggleMode);
@@ -139,11 +122,23 @@ export async function initDebug() {
   elements.debugStateContent.addEventListener('click', (e) => {
     const maxBtn = e.target.closest('.content-maximize-btn');
     if (maxBtn?.dataset.maximizeId) { e.stopPropagation(); return handleMaximize(maxBtn); }
+
+    const editBtn = e.target.closest('.prefs-edit-btn');
+    if (editBtn) { e.stopPropagation(); return handlePrefsEdit(); }
+
+    const saveBtn = e.target.closest('.prefs-save-btn');
+    if (saveBtn) { e.stopPropagation(); return handlePrefsSave(); }
+
+    const cancelBtn = e.target.closest('.prefs-cancel-btn');
+    if (cancelBtn) { e.stopPropagation(); return handlePrefsCancel(); }
+
+    const undoBtn = e.target.closest('.prefs-undo-btn');
+    if (undoBtn) { e.stopPropagation(); return handlePrefsUndo(); }
+
     const header = e.target.closest('.state-block-header');
     if (header) header.closest('.state-block')?.classList.toggle('collapsed');
   });
 
-  state.tabId = await getCurrentTabId();
   await loadStoredTraces();
 }
 
@@ -181,11 +176,6 @@ async function refreshStats() {
   }
 }
 
-async function getCurrentTabId() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab?.id;
-}
-
 function toggleMode() {
   const isDebug = elements.debugContainer.classList.toggle('hidden');
   elements.chatContainer.classList.toggle('hidden', !isDebug);
@@ -202,15 +192,6 @@ function toggleMode() {
     elements.statusText.textContent = 'Debug Mode';
     elements.statusDot?.classList.remove('active');
   }
-}
-
-function showError(msg) {
-  elements.debugTimeline.innerHTML = `
-    <div class="timeline-error-block">
-      <div class="timeline-error-icon">✕</div>
-      <div class="timeline-error-msg">${escapeHtml(msg)}</div>
-    </div>
-  `;
 }
 
 function renderTimeline(run) {
@@ -243,8 +224,7 @@ function renderTimeline(run) {
 function renderNode(node, depth = 0) {
   const hasChildren = node.children?.length > 0;
   const hasDetails = node.input || node.output || node.error || node.context || node.model || node.prompt || node.status === 'skipped';
-  const icons = { action: 'A', step: 'S', function: 'F', llm: 'L', chrome: 'C', context: '{}', warning: '!', iteration: '↻' };
-  const icon = icons[node.type] || '?';
+  const icon = NODE_ICONS[node.type] || '?';
   if (icon === '?') console.warn('Unknown node type:', node);
   const statusIcon = { success: ICONS.check, error: ICONS.x, running: ICONS.dot, skipped: '⏭' }[node.status] || '';
   const statusClass = `trace-status-${node.status || 'pending'}`;
@@ -276,8 +256,12 @@ function renderNode(node, depth = 0) {
     const outputData = node.output?.result ?? node.output;
 
     if (node.type === 'llm' && typeof outputData === 'object' && outputData !== null) {
-      // Format LLM response with separate sections
-      const { reasoning, toolCalls, content, remaining } = formatLLMResponse(outputData);
+      // Extract LLM response fields
+      const reasoning = outputData.reasoning || null;
+      const toolCalls = outputData.tool_calls || null;
+      const content = outputData.content || null;
+      const remainingEntries = Object.entries(outputData).filter(([k]) => !['reasoning', 'tool_calls', 'usage', 'model', 'content'].includes(k));
+      const remaining = remainingEntries.length > 0 ? Object.fromEntries(remainingEntries) : null;
 
       if (reasoning) {
         if (reasoning.length > MAXIMIZE_THRESHOLD) {
@@ -355,8 +339,9 @@ function detailRow(label, value) {
 
 function renderHistory() {
   const getLabel = (run) => {
+    if (run.inputPreview) return run.inputPreview;
     if (run.params?.user_message) return run.params.user_message.slice(0, 30) + (run.params.user_message.length > 30 ? '…' : '');
-    return run.action || 'Action';  // Fallback for old traces without name in metadata
+    return run.action || 'Action';  // Fallback for old traces without inputPreview
   };
   elements.debugHistory.innerHTML = state.history.map((run, i) => `
     <div class="p-1.5 rounded text-xs cursor-pointer ${i === state.selected ? 'bg-primary/20' : 'hover:bg-base-300'} ${run.status === 'error' ? 'border-l-2 border-error' : ''}" data-idx="${i}">
@@ -365,7 +350,7 @@ function renderHistory() {
         <button class="opacity-40 hover:opacity-100 hover:text-error text-xs" data-delete="${i}" title="Delete">×</button>
       </div>
       <div class="opacity-50 flex justify-between">
-        <span>${formatTime(run.time)}</span>
+        <span>${run.time.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })}</span>
         <span>${run.duration ? formatDuration(run.duration) : ''}</span>
       </div>
     </div>
@@ -404,7 +389,12 @@ async function selectHistory(idx) {
   }
 
   if (run.error && !run.trace) {
-    showError(run.error);
+    elements.debugTimeline.innerHTML = `
+      <div class="timeline-error-block">
+        <div class="timeline-error-icon">✕</div>
+        <div class="timeline-error-msg">${escapeHtml(run.error)}</div>
+      </div>
+    `;
   } else {
     renderTimeline(run);
   }
@@ -515,7 +505,7 @@ async function loadStoredTraces() {
       // Only store metadata - full trace loaded on demand when selected
       state.history = traces.map(t => ({
         id: t.traceId, action: t.name, time: new Date(t.timestamp),
-        status: t.status, duration: t.duration,
+        status: t.status, duration: t.duration, inputPreview: t.inputPreview,
         trace: null, critique: null, error: null  // Loaded on demand
       }));
       renderHistory();
@@ -555,7 +545,6 @@ async function deleteHistoryItem(idx) {
 }
 
 const formatDuration = ms => ms < 1000 ? `${Math.round(ms)}ms` : `${(ms/1000).toFixed(1)}s`;
-const formatTime = d => d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
 const escapeHtml = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
 
 // ==========================================================================
@@ -650,11 +639,11 @@ async function renderState() {
 
   try {
     const [prefsStorage, browserState] = await Promise.all([
-      chrome.storage.local.get(PREFERENCES_KB_KEY),
+      chrome.storage.local.get('user_preferences_kb'),
       getBrowserStateBundle()
     ]);
 
-    const userPreferences = prefsStorage[PREFERENCES_KB_KEY] || '';
+    const userPreferences = prefsStorage['user_preferences_kb'] || '';
 
     container.innerHTML = `
       ${renderStateBlock('user_preferences', 'User Preferences', userPreferences, 'prefs')}
@@ -676,6 +665,23 @@ function renderStateBlock(key, label, value, type) {
   const showMaximize = !isEmpty && rawValue.length > MAXIMIZE_THRESHOLD;
   const id = `state-${key}-${Date.now()}`;
 
+  // Check if we're in edit mode for prefs
+  if (type === 'prefs' && prefsEditState.editing) {
+    return `
+      <div class="state-block state-block-${type}" data-key="${key}">
+        <div class="state-block-header">
+          <span class="state-block-chevron">${ICONS.chevron}</span>
+          <span class="state-block-icon state-block-icon-${type}">◉</span>
+          <span class="state-block-label">${escapeHtml(label)}</span>
+          <span class="state-block-key font-mono">${escapeHtml(key)}</span>
+        </div>
+        <div class="state-block-content">
+          ${renderPrefsEditing(rawValue)}
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="state-block state-block-${type}" data-key="${key}">
       <div class="state-block-header">
@@ -684,6 +690,14 @@ function renderStateBlock(key, label, value, type) {
         <span class="state-block-label">${escapeHtml(label)}</span>
         <span class="state-block-key font-mono">${escapeHtml(key)}</span>
         ${!isEmpty ? `<span class="state-block-size">${formatSize(rawValue.length)} chars</span>` : ''}
+        ${type === 'prefs' ? `
+          <button class="prefs-edit-btn btn btn-ghost btn-xs opacity-60 hover:opacity-100 ml-2" title="Edit preferences">
+            <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+        ` : ''}
       </div>
       <div class="state-block-content">
         ${showMaximize ? `
@@ -706,5 +720,68 @@ async function refreshState() {
   } finally {
     elements.debugStateRefreshBtn.disabled = false;
     elements.debugStateRefreshBtn.classList.remove('loading', 'loading-spinner');
+  }
+}
+
+// ==========================================================================
+// Preferences Editor
+// ==========================================================================
+
+function renderPrefsEditing(currentValue) {
+  return `
+    <div class="prefs-editor">
+      <textarea class="textarea textarea-bordered textarea-sm w-full font-mono text-xs min-h-[200px] bg-base-200"
+                id="prefsEditTextarea">${escapeHtml(currentValue)}</textarea>
+      <div class="flex items-center justify-end gap-2 mt-3 pt-3 border-t border-base-content/10">
+        <button class="prefs-undo-btn btn btn-ghost btn-xs gap-1" title="Revert changes">
+          <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+          </svg>
+          Undo
+        </button>
+        <button class="prefs-cancel-btn btn btn-ghost btn-xs">Cancel</button>
+        <button class="prefs-save-btn btn btn-primary btn-xs gap-1">
+          <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17,21 17,13 7,13 7,21"/>
+            <polyline points="7,3 7,8 15,8"/>
+          </svg>
+          Save
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function handlePrefsEdit() {
+  const storage = await chrome.storage.local.get('user_preferences_kb');
+  const currentValue = storage['user_preferences_kb'] || '';
+  prefsEditState = { editing: true, originalValue: currentValue };
+  await renderState();
+
+  // Focus textarea after render
+  document.getElementById('prefsEditTextarea')?.focus();
+}
+
+async function handlePrefsSave() {
+  const textarea = document.getElementById('prefsEditTextarea');
+  const newValue = /** @type {HTMLTextAreaElement} */ (textarea)?.value || '';
+
+  await chrome.storage.local.set({ 'user_preferences_kb': newValue });
+  prefsEditState = { editing: false, originalValue: '' };
+
+  await renderState();
+}
+
+function handlePrefsCancel() {
+  prefsEditState = { editing: false, originalValue: '' };
+  renderState();
+}
+
+function handlePrefsUndo() {
+  const textarea = document.getElementById('prefsEditTextarea');
+  if (textarea) {
+    /** @type {HTMLTextAreaElement} */ (textarea).value = prefsEditState.originalValue;
   }
 }

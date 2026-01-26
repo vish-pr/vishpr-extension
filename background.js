@@ -1,7 +1,8 @@
 // Background Service Worker
 import { isInitialized } from './modules/llm/index.js';
 import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
-import { getAction, BROWSER_ROUTER } from './modules/actions/index.js';
+import { getAction } from './modules/actions/index.js';
+import { ROUTER_ACTION } from './modules/actions/router-action.js';
 import logger from './modules/logger.js';
 
 // Track panel open state per window
@@ -84,7 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleUserMessage({ message }) {
-  const actionName = BROWSER_ROUTER;
+  const actionName = ROUTER_ACTION.name;
   const params = { goal: message };
 
   try {

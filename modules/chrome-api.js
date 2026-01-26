@@ -38,10 +38,9 @@ class ChromeAPI {
 
   async _persistState() {
     try {
-      const stateJSON = this.toJSON();
-      await chrome.storage.session.set({ browserState: stateJSON });
-    } catch (error) {
-      console.warn('Failed to persist browser state:', error.message);
+      await chrome.storage.session.set({ browserState: { tabs: Object.fromEntries(this.tabs) } });
+    } catch (e) {
+      console.warn('Failed to persist browser state:', e.message);
     }
   }
 
@@ -138,32 +137,19 @@ class ChromeAPI {
 
   getTabError(tabId) {
     const error = this.tabErrors.get(tabId);
-    // Only return if error is recent (within 30 seconds)
-    if (error && Date.now() - error.timestamp < 30000) {
-      return error.error;
-    }
-    return null;
+    return (error && Date.now() - error.timestamp < 30000) ? error.error : null;
   }
 
-  _initCurrentTab() {
-    this._readyPromise = (async () => {
-      try {
-        // Clear existing tabs when reinitializing
-        this.tabs.clear();
+  async _initCurrentTab() {
+    this._readyPromise = this._loadAllTabs();
+  }
 
-        // Load ALL tabs from all windows
-        const allTabs = await chrome.tabs.query({});
-        for (const tab of allTabs) {
-          if (tab.id && tab.url) {
-            this._ensureTab(tab.id, tab.url, tab.windowId);
-          }
-        }
-
-        this._persistState();
-      } catch (e) {
-        console.warn('Failed to initialize tabs:', e.message);
-      }
-    })();
+  async _loadAllTabs() {
+    try {
+      this.tabs.clear();
+      (await chrome.tabs.query({})).forEach(t => t.id && t.url && this._ensureTab(t.id, t.url, t.windowId));
+      this._persistState();
+    } catch (e) { console.warn('Failed to initialize tabs:', e.message); }
   }
 
   _ensureTab(tabId, url, windowId) {
@@ -183,34 +169,17 @@ class ChromeAPI {
       if (windowId !== undefined) tab.windowId = windowId;
       if (tab.url !== url) {
         tab.url = url;
-        tab.urlHistory.push({ url, timestamp: now });
-        if (tab.urlHistory.length > 5) {
-          tab.urlHistory = tab.urlHistory.slice(-5);
-        }
+        tab.urlHistory = [...tab.urlHistory, { url, timestamp: now }].slice(-5);
       }
     }
     return this.tabs.get(tabId);
   }
 
-  // --- Tab Telemetry ---
-
-  getTab(tabId) { return this.tabs.get(tabId) || null; }
-
   // --- Content Storage ---
 
-  updateTabContent(tabId, { raw, cleaned, summary }) {
+  updateTabContent(tabId, updates) {
     const tab = this._ensureTab(tabId, this.tabs.get(tabId)?.url || 'unknown');
-    if (raw !== undefined) tab.content.raw = raw;
-    if (cleaned !== undefined) tab.content.cleaned = cleaned;
-    if (summary !== undefined) tab.content.summary = summary;
-  }
-
-  // --- Serialization (for persistence) ---
-
-  toJSON() {
-    const json = { tabs: {} };
-    for (const [tabId, tab] of Array.from(this.tabs)) json.tabs[tabId] = tab;
-    return json;
+    Object.assign(tab.content, Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined)));
   }
 
   // --- Browser State Formatting (for LLM context) ---
@@ -248,94 +217,49 @@ class ChromeAPI {
   // --- Browser Operations ---
 
   // Check if URL is a restricted internal page where content scripts cannot run
-  // Returns error message string if restricted, null otherwise
   _isRestrictedUrl(url) {
     if (!url) return 'Cannot access page - URL is not available';
-
-    const restrictedPatterns = [
-      { pattern: /^chrome:\/\//i, message: 'Cannot access chrome:// internal pages' },
-      { pattern: /^chrome-extension:\/\//i, message: 'Cannot access extension pages' },
-      { pattern: /^edge:\/\//i, message: 'Cannot access edge:// internal pages' },
-      { pattern: /^about:/i, message: 'Cannot access about: pages' },
-      { pattern: /^view-source:/i, message: 'Cannot access view-source: pages' },
-      { pattern: /^devtools:\/\//i, message: 'Cannot access DevTools pages' },
-      { pattern: /^https?:\/\/chrome\.google\.com\/webstore/i, message: 'Cannot access Chrome Web Store pages' },
-      { pattern: /^https?:\/\/chromewebstore\.google\.com/i, message: 'Cannot access Chrome Web Store pages' },
-      { pattern: /^https?:\/\/microsoftedge\.microsoft\.com\/addons/i, message: 'Cannot access Edge Add-ons Store pages' },
-    ];
-
-    for (const { pattern, message } of restrictedPatterns) {
-      if (pattern.test(url)) return message;
-    }
+    if (/^(chrome|chrome-extension|edge|devtools):\/\//i.test(url)) return 'Cannot access browser internal pages';
+    if (/^(about|view-source):/i.test(url)) return 'Cannot access browser internal pages';
+    if (/^https?:\/\/(chrome\.google\.com\/webstore|chromewebstore\.google\.com|microsoftedge\.microsoft\.com\/addons)/i.test(url)) return 'Cannot access extension store pages';
     return null;
   }
 
   // Check if error indicates a browser error page (certificate errors, DNS failures, etc.)
   _isErrorPageError(errorMessage) {
-    const errorPagePatterns = [
-      /error page/i,
-      /showing error/i,
-      /ERR_CERT/i,
-      /ERR_SSL/i,
-      /ERR_CONNECTION/i,
-      /ERR_NAME_NOT_RESOLVED/i,
-      /ERR_INTERNET_DISCONNECTED/i,
-      /ERR_NETWORK/i,
-    ];
-    return errorPagePatterns.some(pattern => pattern.test(errorMessage));
+    return /error page|showing error|ERR_CERT|ERR_SSL|ERR_CONNECTION|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_NETWORK/i.test(errorMessage);
+  }
+
+  _throwBrowserError(errorMsg, tabId, url) {
+    const detail = this.getTabError(tabId) || errorMsg;
+    throw Object.assign(new Error(`Cannot read page: ${detail}`), { code: 'BROWSER_ERROR_PAGE', url });
   }
 
   async _executeContentScript(tabId, action, params = {}) {
-    try {
-      await chrome.tabs.get(tabId);
-    } catch { throw new Error('Tab no longer exists'); }
+    try { await chrome.tabs.get(tabId); } catch { throw new Error('Tab no longer exists'); }
 
-    // Switch to target tab if not active - ensures activeTab permission applies
     if (tabId !== this._lastActivatedTabId) {
       await chrome.tabs.update(tabId, { active: true });
       this._lastActivatedTabId = tabId;
-      // Brief wait for tab activation
       await new Promise(r => setTimeout(r, 50));
     }
 
     const urlBefore = await getTabUrl(tabId);
-
-    // Check for restricted URLs first
-    const restrictionMessage = this._isRestrictedUrl(urlBefore);
-    if (restrictionMessage) {
-      throw new Error(restrictionMessage);
-    }
+    const restricted = this._isRestrictedUrl(urlBefore);
+    if (restricted) throw new Error(restricted);
 
     let result;
     try {
       result = await chrome.tabs.sendMessage(tabId, { action, ...params });
     } catch (error) {
-      // Check for browser error page (certificate errors, connection failures, etc.)
-      if (this._isErrorPageError(error.message)) {
-        const networkError = this.getTabError(tabId);
-        const errorDetail = networkError || error.message;
-        const err = Object.assign(new Error(`Cannot read page: ${errorDetail}`), {
-          code: 'BROWSER_ERROR_PAGE',
-          url: urlBefore
-        });
-        throw err;
-      }
+      if (this._isErrorPageError(error.message)) this._throwBrowserError(error.message, tabId, urlBefore);
 
       if (error.message.includes('Could not establish connection') || error.message.includes('Receiving end does not exist')) {
         try {
           await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
           result = await chrome.tabs.sendMessage(tabId, { action, ...params });
         } catch (retryError) {
-          // Check again for error page after retry
-          if (this._isErrorPageError(retryError.message)) {
-            const networkError = this.getTabError(tabId);
-            const errorDetail = networkError || retryError.message;
-            const err = Object.assign(new Error(`Cannot read page: ${errorDetail}`), {
-              code: 'BROWSER_ERROR_PAGE',
-              url: urlBefore
-            });
-            throw err;
-          }
+          if (this._isErrorPageError(retryError.message)) this._throwBrowserError(retryError.message, tabId, urlBefore);
           throw retryError;
         }
       } else {
@@ -482,21 +406,16 @@ class ChromeAPI {
     return { navigated: true, new_url: validatedUrl };
   }
 
-  async goBack(tabId) {
-    await chrome.tabs.goBack(tabId);
+  async _navigate(tabId, direction) {
+    await (direction === 'back' ? chrome.tabs.goBack(tabId) : chrome.tabs.goForward(tabId));
     await new Promise(r => setTimeout(r, 500));
     const tab = await chrome.tabs.get(tabId);
     if (tab?.url) this._ensureTab(tabId, tab.url);
-    return { navigated: true, direction: 'back' };
+    return { navigated: true, direction };
   }
 
-  async goForward(tabId) {
-    await chrome.tabs.goForward(tabId);
-    await new Promise(r => setTimeout(r, 500));
-    const tab = await chrome.tabs.get(tabId);
-    if (tab?.url) this._ensureTab(tabId, tab.url);
-    return { navigated: true, direction: 'forward' };
-  }
+  async goBack(tabId) { return this._navigate(tabId, 'back'); }
+  async goForward(tabId) { return this._navigate(tabId, 'forward'); }
 
   async getPageState(tabId) {
     return this._executeScript(tabId, () => ({
@@ -547,23 +466,12 @@ class ChromeAPI {
 
 // Singleton instance
 let chromeAPIInstance = null;
-
-export function getChromeAPI() {
-  if (!chromeAPIInstance) chromeAPIInstance = new ChromeAPI();
-  return chromeAPIInstance;
-}
+export function getChromeAPI() { return chromeAPIInstance || (chromeAPIInstance = new ChromeAPI()); }
 
 export async function getBrowserStateBundle() {
   const api = getChromeAPI();
   await api.ready();
-
-  // Get current window and active tab dynamically
-  const currentWindow = await chrome.windows.getCurrent();
-  const [activeTab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
-
-  return api.formatForChat(
-    currentWindow.id,
-    activeTab?.id,
-    activeTab?.url
-  );
+  const win = await chrome.windows.getCurrent();
+  const [tab] = await chrome.tabs.query({ active: true, windowId: win.id });
+  return api.formatForChat(win.id, tab?.id, tab?.url);
 }

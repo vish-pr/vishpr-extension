@@ -7,8 +7,6 @@
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
 
-export const FINAL_RESPONSE = 'FINAL_RESPONSE';
-
 const DECISION_SYSTEM_PROMPT = `You decide: return answer directly OR generate extraction prompt.
 
 # Critical Rule
@@ -108,8 +106,8 @@ const FINAL_OUTPUT_SCHEMA: JSONSchema = {
   additionalProperties: false
 };
 
-export const finalResponseAction: Action = {
-  name: FINAL_RESPONSE,
+export const FINAL_RESPONSE_ACTION: Action = {
+  name: 'FINAL_RESPONSE',
   description: `MANDATORY FINAL STEP.
 
 This tool MUST be called once sufficient information has been obtained

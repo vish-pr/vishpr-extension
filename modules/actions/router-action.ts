@@ -3,22 +3,20 @@
  * Decides between browser actions vs direct chat response
  */
 import type { Action } from './types/index.js';
-import { BROWSER_ACTION } from './browser-actions.js';
-import { FINAL_RESPONSE } from './final-response-action.js';
-import { LLM_TOOL } from './llm-action.js';
-import { USER_CLARIFICATION } from './clarification-actions.js';
-import { CRITIQUE } from './critique-action.js';
-import { PREFERENCE_EXTRACTOR } from './preference-extractor-action.js';
-import { CONTEXT_SELECTOR } from './context-selector-action.js';
-
-export const BROWSER_ROUTER = 'BROWSER_ROUTER';
+import { BROWSER_ACTION_ROUTER } from './browser-actions.js';
+import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
+import { LLM_ACTION } from './llm-action.js';
+import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
+import { CRITIQUE_ACTION } from './critique-action.js';
+import { PREFERENCE_EXTRACTOR_ACTION } from './preference-extractor-action.js';
+import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
 
 /**
- * BROWSER_ROUTER action (Tier-1)
+ * ROUTER_ACTION (Tier-1)
  * Routes between browser actions and direct chat responses
  */
-export const routerAction: Action = {
-  name: BROWSER_ROUTER,
+export const ROUTER_ACTION: Action = {
+  name: 'ROUTER',
   description: 'Route user requests to browser interaction, general knowledge, or final response',
   input_schema: {
     type: 'object',
@@ -35,7 +33,7 @@ export const routerAction: Action = {
     // Step 1: Select relevant context
     {
       type: 'action',
-      action: CONTEXT_SELECTOR
+      action: CONTEXT_SELECTOR_ACTION.name
     },
     // Step 2: Route with filtered context
     {
@@ -149,18 +147,18 @@ Do NOT retry the same action unless it failed. Trust successful results.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [
-          BROWSER_ACTION,
-          LLM_TOOL,
-          USER_CLARIFICATION,
-          FINAL_RESPONSE
+          BROWSER_ACTION_ROUTER.name,
+          LLM_ACTION.name,
+          USER_CLARIFICATION_ACTION.name,
+          FINAL_RESPONSE_ACTION.name
         ],
-        stop_action: FINAL_RESPONSE,
+        stop_action: FINAL_RESPONSE_ACTION.name,
         max_iterations: 5
       }
     }
   ],
   post_steps: [
-    { type: 'action', action: CRITIQUE },
-    { type: 'action', action: PREFERENCE_EXTRACTOR }
+    { type: 'action', action: CRITIQUE_ACTION.name },
+    { type: 'action', action: PREFERENCE_EXTRACTOR_ACTION.name }
   ]
 };

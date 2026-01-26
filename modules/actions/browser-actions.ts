@@ -4,8 +4,9 @@
  */
 import type { Action, Message, StepContext, StepResult, JSONSchema } from './types/index.js';
 import { getChromeAPI } from '../chrome-api.js';
-import { FINAL_RESPONSE } from './final-response-action.js';
-import { CONTEXT_SELECTOR } from './context-selector-action.js';
+import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
+import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
+import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
 // Schema for LLM content cleaning output
@@ -623,12 +624,10 @@ export const browserActions: Action[] = [
 ];
 
 /**
- * BROWSER_ACTION - Tier-2 Router
+ * BROWSER_ACTION_ROUTER - Tier-2 Router
  */
-export const BROWSER_ACTION = 'BROWSER_ACTION';
-
-export const browserActionRouter: Action = {
-  name: BROWSER_ACTION,
+export const BROWSER_ACTION_ROUTER: Action = {
+  name: 'BROWSER_ACTION',
   description: 'Interact with web pages: read content, click elements, fill forms, navigate, scroll',
   examples: [
     'What is this page?',
@@ -650,83 +649,90 @@ export const browserActionRouter: Action = {
     // Step 1: Select relevant context
     {
       type: 'action',
-      action: CONTEXT_SELECTOR
+      action: CONTEXT_SELECTOR_ACTION.name
     },
     // Step 2: Execute browser actions with filtered context
     {
       type: 'llm',
-      system_prompt: `You automate browser interactions.
+      system_prompt: `You are an autonomous browser interaction agent.
+You must accomplish the user's GOAL by navigating web pages and interacting with elements using tools.
 
-# Critical Rule
-MUST call READ_PAGE first to get element IDs before ANY interaction (click, fill, select).
-NEVER guess element IDs - they come only from READ_PAGE results.
+────────────────────────────────────────
+CORE PRINCIPLES
+────────────────────────────────────────
+• You operate ONLY through the provided tools
+• You NEVER invent state, IDs, tabs, URLs, or outcomes
+• You NEVER output internal reasoning, justification, or metadata
+• You ONLY output tool calls or FINAL_RESPONSE is last tool call to return output to user.
+• If the goal is ambiguous, request clarification via USER_CLARIFICATION_ACTION.
 
-# Tools
+────────────────────────────────────────
+AUTONOMOUS NAVIGATION RULE (CRITICAL)
+────────────────────────────────────────
+If the user's goal requires web content AND no page is currently loaded:
+→ YOU MUST NAVIGATE_TO an appropriate public website before any READ_PAGE.
 
-## Content & State
-- READ_PAGE: Extract content, links, buttons, inputs with element IDs
-- GET_PAGE_STATE: Check scroll position, viewport, load status
+Examples:
+• Goal: "play music" → navigate to a music streaming site
+• Goal: "search for shoes" → navigate to a shopping site
+• Goal: "check email" → navigate to a webmail provider
 
-## Interaction (require elementId from READ_PAGE)
-- CLICK_ELEMENT: Click button/link. Options: newTab, newTabActive, download
-- FILL_FORM: Fill inputs. Format: form_fields=[{elementId, value}]
-- SELECT_OPTION: Choose dropdown value
-- CHECK_CHECKBOX: Set checked state (true/false)
-- SUBMIT_FORM: Submit form by button/form element
+────────────────────────────────────────
+CRITICAL RULE
+────────────────────────────────────────
+MUST call READ_PAGE to obtain element IDs before ANY interaction
+(click, fill, select, check, submit).
 
-## Navigation
-- NAVIGATE_TO: Go to specific URL
-- SCROLL_TO: Scroll direction (up/down/top/bottom)
-- GO_BACK, GO_FORWARD: Browser history
-- WAIT_FOR_LOAD: Wait for page load (after navigation)
-- WAIT_FOR_ELEMENT: Wait for specific element
+NEVER guess or invent element IDs.
+Element IDs ONLY come from the most recent READ_PAGE.
 
-## Completion
-- FINAL_RESPONSE: Task complete or error - terminate
-
-# Workflow Rules
-
-MUST:
-- READ_PAGE before any click/fill/select action
-- Use exact elementId from most recent READ_PAGE
-- WAIT_FOR_LOAD after NAVIGATE_TO or CLICK_ELEMENT on links
-
-SHOULD:
-- READ_PAGE again after navigation to see new content
-- Verify action success with READ_PAGE if uncertain
-
-NEVER:
-- Click/fill without prior READ_PAGE
-- Invent or guess element IDs
-- Loop more than 3 times on same action
-
-# Error Handling
-- If element not found, READ_PAGE again (page may have changed)
-- If same error twice, use FINAL_RESPONSE to report issue
-- If action fails after retry, try alternative approach or report
-
-# Examples
-
-Task: "Click the login button"
-1. READ_PAGE → get buttons with IDs
-2. CLICK_ELEMENT with login button's elementId
-
-Task: "Search for 'laptop'"
-1. READ_PAGE → find search input ID
-2. FILL_FORM with [{elementId: X, value: "laptop"}]
-3. READ_PAGE → find submit button
-4. CLICK_ELEMENT or SUBMIT_FORM
-
-Task: "Go to amazon.com and search"
-1. NAVIGATE_TO url="https://amazon.com"
-2. WAIT_FOR_LOAD
-3. READ_PAGE → find search elements
-4. FILL_FORM + SUBMIT_FORM
+────────────────────────────────────────
+TOOLS
+────────────────────────────────────────
 
 {{{decisionGuide}}}
 
-# Reminder
-READ_PAGE first for element IDs. Use FINAL_RESPONSE when done or stuck.`,
+────────────────────────────────────────
+WORKFLOW RULES
+────────────────────────────────────────
+MUST:
+• NAVIGATE_TO if no page context exists and goal requires content
+• READ_PAGE before ANY interaction
+• Use elementId from MOST RECENT READ_PAGE
+• Use FINAL_RESPONSE when task is complete or blocked or you have gathered data for request and need to format or present it to the user
+
+SHOULD:
+• READ_PAGE again after navigation or major UI change
+• Verify success with READ_PAGE if uncertain
+
+NEVER:
+• Click or fill without READ_PAGE
+• Invent element IDs, URLs, or tabs
+• Loop more than 2 times on the same failed action
+
+────────────────────────────────────────
+ERROR HANDLING
+────────────────────────────────────────
+• If element not found → READ_PAGE again
+• If same error occurs twice → FINAL_RESPONSE with error
+• If interaction fails → try an alternative valid approach
+
+────────────────────────────────────────
+INTENT MAPPING
+────────────────────────────────────────
+"What is on this page?" → READ_PAGE
+"Show page content" → READ_PAGE
+"Go to https://example.com" → NAVIGATE_TO
+"Click the login button" → READ_PAGE → CLICK_ELEMENT
+"Search for 'laptop'" → READ_PAGE → FILL_FORM → SUBMIT_FORM
+"Finish" / "Done" / "Return result" → FINAL_RESPONSE
+
+────────────────────────────────────────
+REMINDER
+────────────────────────────────────────
+If no element IDs are available, READ_PAGE.
+If no page exists, NAVIGATE_TO first.
+Use FINAL_RESPONSE to terminate.`,
       message: `Execute browser interaction.
 
 Context:
@@ -750,6 +756,7 @@ Do NOT repeat successful actions. Trust previous results.`,
       intelligence: 'MEDIUM',
       tool_choice: {
         available_actions: [
+          USER_CLARIFICATION_ACTION.name,
           READ_PAGE.name,
           CLICK_ELEMENT.name,
           FILL_FORM.name,
@@ -762,9 +769,9 @@ Do NOT repeat successful actions. Trust previous results.`,
           WAIT_FOR_ELEMENT.name,
           GO_BACK.name,
           GO_FORWARD.name,
-          FINAL_RESPONSE
+          FINAL_RESPONSE_ACTION.name
         ],
-        stop_action: FINAL_RESPONSE,
+        stop_action: FINAL_RESPONSE_ACTION.name,
         max_iterations: 7
       }
     }

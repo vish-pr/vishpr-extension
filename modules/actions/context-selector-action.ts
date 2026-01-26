@@ -6,8 +6,6 @@
  */
 import type { Action, JSONSchema } from './types/index.js';
 
-export const CONTEXT_SELECTOR = 'CONTEXT_SELECTOR';
-
 // =============================================================================
 // Schemas
 // =============================================================================
@@ -90,8 +88,8 @@ Reasoning: No context needed for simple calculation.`;
 // Action
 // =============================================================================
 
-export const contextSelectorAction: Action = {
-  name: CONTEXT_SELECTOR,
+export const CONTEXT_SELECTOR_ACTION: Action = {
+  name: 'CONTEXT_SELECTOR',
   description: 'Extracts and combines relevant context for tool execution, filtering out unneeded information.',
   examples: [
     'Select context for a browser action',
@@ -143,5 +141,5 @@ Return a single combined context block with only the relevant parts, or empty st
 // =============================================================================
 
 export const contextSelectorActions: Action[] = [
-  contextSelectorAction
+  CONTEXT_SELECTOR_ACTION
 ];

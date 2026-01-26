@@ -10,9 +10,7 @@
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
 import { summarize } from '../summarize.js';
-import { KNOWLEDGE_BASE_ADAPTOR } from './knowledge-base-action.js';
-
-export const PREFERENCE_EXTRACTOR = 'PREFERENCE_EXTRACTOR';
+import { KNOWLEDGE_BASE_ADAPTOR_ACTION } from './knowledge-base-action.js';
 
 // Storage key for user preferences knowledge base
 const PREFERENCES_KB_KEY = 'user_preferences_kb';
@@ -316,8 +314,8 @@ async function buildFinalResultAndSave(ctx: StepContext): Promise<StepResult> {
 // Action
 // =============================================================================
 
-export const preferenceExtractorAction: Action = {
-  name: PREFERENCE_EXTRACTOR,
+export const PREFERENCE_EXTRACTOR_ACTION: Action = {
+  name: 'PREFERENCE_EXTRACTOR',
   description: 'Extracts user preferences from execution trace and merges them into the knowledge base.',
   examples: [
     'Extract preferences from this trace',
@@ -378,7 +376,7 @@ Output: 2-5 sentences, one preference each. Or: "No new preferences identified."
     // Step 5: Update knowledge base (skip if no preferences)
     {
       type: 'action',
-      action: KNOWLEDGE_BASE_ADAPTOR
+      action: KNOWLEDGE_BASE_ADAPTOR_ACTION.name
     },
 
     // Step 6: Build final result and save to storage
@@ -394,5 +392,5 @@ Output: 2-5 sentences, one preference each. Or: "No new preferences identified."
 // =============================================================================
 
 export const preferenceExtractorActions: Action[] = [
-  preferenceExtractorAction
+  PREFERENCE_EXTRACTOR_ACTION
 ];

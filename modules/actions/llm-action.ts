@@ -4,8 +4,6 @@
  */
 import type { Action, JSONSchema } from './types/index.js';
 
-export const LLM_TOOL = 'LLM_TOOL';
-
 const PROMPT_GENERATOR_SYSTEM = `You craft system prompts for LLMs.
 
 # Task
@@ -87,8 +85,8 @@ const RESPONSE_OUTPUT_SCHEMA: JSONSchema = {
  * Calls a large language model for general knowledge, analysis, reasoning, and planning
  * This is NOT a stop action - the loop continues after getting a response
  */
-export const llmAction: Action = {
-  name: LLM_TOOL,
+export const LLM_ACTION: Action = {
+  name: 'LLM',
   description: 'Calls a large language model for general knowledge, analysis, reasoning, and planning. Best for: answering knowledge questions, code generation, problem-solving, strategy development, and tasks requiring general world understanding. Limitations: No access to live/current information, web browsing, or file system.',
   examples: [
     'What is the capital of France?',

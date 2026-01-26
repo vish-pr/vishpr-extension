@@ -9,13 +9,6 @@
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
 
-// Action name constants
-export const RIDDLER = 'RIDDLER';
-export const ANSWERER = 'ANSWERER';
-export const CHECKER = 'CHECKER';
-export const ADAPTAR = 'ADAPTAR';
-export const KNOWLEDGE_BASE_ADAPTOR = 'KNOWLEDGE_BASE_ADAPTOR';
-
 // Shared schemas
 const RIDDLER_OUTPUT_SCHEMA: JSONSchema = {
   type: 'object',
@@ -79,8 +72,8 @@ const ADAPTAR_OUTPUT_SCHEMA: JSONSchema = {
 /**
  * RIDDLER - Generate questions and answers from a knowledge chunk
  */
-export const riddlerAction: Action = {
-  name: RIDDLER,
+export const RIDDLER_ACTION: Action = {
+  name: 'RIDDLER',
   description: 'Generates question-answer pairs from a chunk of knowledge. Creates 2-5 questions depending on complexity, with short concise answers.',
   examples: [
     'Generate quiz questions from this article',
@@ -150,8 +143,8 @@ Create 2-5 questions testing key concepts. Answers must be 1-2 sentences, direct
 /**
  * ANSWERER - Answer questions using existing knowledge base
  */
-export const answererAction: Action = {
-  name: ANSWERER,
+export const ANSWERER_ACTION: Action = {
+  name: 'ANSWERER',
   description: 'Answers questions based on an existing knowledge base. Returns the original questions with answers derived only from the provided knowledge.',
   examples: [
     'Answer these questions from the knowledge base',
@@ -223,8 +216,8 @@ For each question: answer from knowledge base OR "Not found in knowledge base".`
 /**
  * CHECKER - Validate answer correctness
  */
-export const checkerAction: Action = {
-  name: CHECKER,
+export const CHECKER_ACTION: Action = {
+  name: 'CHECKER',
   description: 'Checks if student answers are correct compared to reference answers. Rates each answer 0-10 based on accuracy.',
   examples: [
     'Grade these answers against the correct ones',
@@ -328,8 +321,8 @@ For each: compare student vs correct answer, rate 0-10. "Not found" = 0-1.`,
 /**
  * ADAPTAR - Incorporate new knowledge into existing knowledge base
  */
-export const adaptarAction: Action = {
-  name: ADAPTAR,
+export const ADAPTAR_ACTION: Action = {
+  name: 'ADAPTAR',
   description: 'Incorporates new knowledge into an existing knowledge base. Adds information needed to answer previously unanswerable questions while keeping the base concise.',
   examples: [
     'Update knowledge base with new information',
@@ -425,8 +418,8 @@ Preserve all existing content. Add new facts that answer the gaps. Remove redund
  * 7. ADAPTAR: Update knowledge base if needed
  * 8. Build final result (function)
  */
-export const knowledgeBaseAdaptorAction: Action = {
-  name: KNOWLEDGE_BASE_ADAPTOR,
+export const KNOWLEDGE_BASE_ADAPTOR_ACTION: Action = {
+  name: 'KNOWLEDGE_BASE_ADAPTOR',
   description: 'Full knowledge base update workflow. Generates questions from new knowledge, tests existing knowledge base, and incorporates new information where gaps exist.',
   examples: [
     'Learn this new information',
@@ -463,7 +456,7 @@ export const knowledgeBaseAdaptorAction: Action = {
     },
 
     // Step 2: Generate Q&A from new knowledge
-    { type: 'action', action: RIDDLER },
+    { type: 'action', action: RIDDLER_ACTION.name },
 
     // Step 2: Extract questions for answerer
     {
@@ -480,7 +473,7 @@ export const knowledgeBaseAdaptorAction: Action = {
     },
 
     // Step 3: Answer questions using existing knowledge
-    { type: 'action', action: ANSWERER },
+    { type: 'action', action: ANSWERER_ACTION.name },
 
     // Step 4: Build comparisons for checker
     {
@@ -502,7 +495,7 @@ export const knowledgeBaseAdaptorAction: Action = {
     },
 
     // Step 5: Check answer correctness
-    { type: 'action', action: CHECKER },
+    { type: 'action', action: CHECKER_ACTION.name },
 
     // Step 6: Filter questions with low scores
     {
@@ -587,9 +580,9 @@ Output the merged knowledge base. Preserve existing + add facts for gaps. No dup
 
 // Export all actions as array for registry
 export const knowledgeBaseActions: Action[] = [
-  riddlerAction,
-  answererAction,
-  checkerAction,
-  adaptarAction,
-  knowledgeBaseAdaptorAction
+  RIDDLER_ACTION,
+  ANSWERER_ACTION,
+  CHECKER_ACTION,
+  ADAPTAR_ACTION,
+  KNOWLEDGE_BASE_ADAPTOR_ACTION
 ];
