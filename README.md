@@ -1,86 +1,133 @@
-# vishpr Browser Agent
+# Vishpr Browser Agent
 
-Chrome extension that automates web browsing through natural language using LLMs via OpenRouter.
+A Chrome extension that automates web browsing through natural language commands. Tell Vishpr what to do in plain English, and watch it click, fill forms, navigate, and extract information for you.
 
-## Install
+## Features
 
-Download the latest `vishpr-extension-*.zip` from [Releases](https://github.com/vish-pr/vishpr-extension/releases), unzip, and load in `chrome://extensions/` with Developer mode enabled.
+- **Natural Language Control** - Type commands like "fill out this contact form" or "click the submit button"
+- **Page Interaction** - Click buttons, links, fill forms, scroll, and navigate
+- **Information Extraction** - Read page content, find elements, and summarize text
+- **Multi-Step Tasks** - Chain multiple actions together for complex workflows
+- **Smart Clarification** - Asks for missing information when commands are ambiguous
+- **LLM Provider Choice** - Works with OpenRouter, Cerebras, Mistral, or any OpenAI-compatible API
 
-## Architecture
+## Installation
 
-```
-User Message
-    │
-    ▼
-┌───────────────────────────────────────────────┐
-│  Tier-1: Router (router-action.js)            │
-│  Routes to: BROWSER_ACTION | LLM_TOOL | SUMMARY_TOOL
-└───────────────────────────────────────────────┘
-    │
-    ▼
-┌───────────────────────────────────────────────┐
-│  Tier-2: Browser Action Router                │
-│  Multi-turn loop with 13 browser actions      │
-│  READ_PAGE → CLICK → FILL_FORM → SUMMARY_TOOL │
-└───────────────────────────────────────────────┘
-```
+### From Releases
 
-## Project Structure
+1. Download the latest ZIP from [Releases](https://github.com/vish-pr/vishpr-extension/releases)
+2. Extract the ZIP file
+3. Load in Chrome:
+   - Go to `chrome://extensions`
+   - Enable "Developer mode"
+   - Click "Load unpacked"
+   - Select the extracted folder
 
-```
-extension/
-├── modules/
-│   ├── executor.js           # Action execution with multi-turn LLM support
-│   ├── actions/
-│   │   ├── index.js          # Central action registry
-│   │   ├── router-action.js  # Tier-1 routing
-│   │   ├── browser-actions.js # Tier-2 router + 13 browser actions
-│   │   ├── llm-action.js     # General knowledge/reasoning
-│   │   └── summary-action.js # Final response to user
-│   ├── llm.js                # OpenRouter client with model cascading
-│   ├── browser-state.js      # Tab/page state management
-│   └── logger.js             # Logging
-├── content.js                # Page interaction (element IDs, clicks, forms)
-├── background.js             # Service worker
-├── sidepanel.js/html         # Chat UI
-└── manifest.json
-```
+### From Source
 
-## Browser Actions
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/vish-pr/vishpr-extension.git
+   cd vishpr-extension
+   ```
 
-| Action | Description |
-|--------|-------------|
-| READ_PAGE | Extract content with element IDs |
-| CLICK_ELEMENT | Click by element ID (supports new tab, download) |
-| FILL_FORM | Fill form fields |
-| SELECT_OPTION | Select dropdown option |
-| CHECK_CHECKBOX | Toggle checkbox |
-| SUBMIT_FORM | Submit form |
-| NAVIGATE_TO | Go to URL |
-| SCROLL_TO | Scroll (up/down/top/bottom) |
-| GET_PAGE_STATE | Get scroll position, viewport info |
-| WAIT_FOR_LOAD | Wait for page load |
-| WAIT_FOR_ELEMENT | Wait for element to appear |
-| GO_BACK / GO_FORWARD | Browser history navigation |
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-## Setup
+3. Build the extension:
+   ```bash
+   npm run build
+   ```
 
-1. `npm install`
-2. `npm run build`
-3. Load `dist/` folder in `chrome://extensions/` (Developer mode)
-4. Click extension → Settings → Add OpenRouter API key
+4. Load in Chrome:
+   - Go to `chrome://extensions`
+   - Enable "Developer mode"
+   - Click "Load unpacked"
+   - Select the `dist` folder
+
+## Usage
+
+1. Click the Vishpr icon or press `Ctrl+Shift+Y` to open the side panel
+2. Enter your API key in Settings (OpenRouter, Cerebras, or custom endpoint)
+3. Type what you want to do:
+   - "Play music"
+   - "Fill out this form with name John Doe and email john@example.com"
+   - "Scroll down and find the pricing section"
+   - "Read the main article and summarize it"
 
 ## Development
 
+### Commands
+
 ```bash
-npm run watch    # Watch mode (JS + CSS)
-npm run build    # Production build
-npm test         # Run tests
+npm run build      # Production build
+npm run package    # Build and create release ZIP
+npm test           # Run tests
+npm run typecheck  # TypeScript type checking
 ```
+
+### Project Structure
+
+```
+├── manifest.json        # Chrome extension manifest (v3)
+├── background.js        # Service worker
+├── content.js           # Content script (runs on pages)
+├── sidepanel.html       # Side panel UI
+├── sidepanel.js         # Side panel initialization
+├── modules/
+│   ├── actions/         # Action definitions (browser, router, LLM)
+│   ├── llm/             # LLM integration with model cascading
+│   ├── debug/           # Trace collector and stats
+│   ├── executor.js      # Action execution engine
+│   ├── chat.js          # Chat UI logic
+│   └── settings.js      # Configuration management
+├── dist/                # Build output
+└── release/             # Packaged releases
+```
+
+### Architecture
+
+The extension uses an action-based architecture:
+
+1. **Router** - Receives user input and routes to appropriate action
+2. **Browser Actions** - READ_PAGE, CLICK_ELEMENT, FILL_FORM, SCROLL_AND_WAIT
+3. **LLM Tool** - Handles general knowledge queries
+4. **Execution Loop** - Multi-turn conversation until task completion
+
+## Configuration
+
+### Supported LLM Providers
+
+- **OpenRouter** (default) - Access to multiple models
+- **Cerebras** - Fast inference
+- **Mistral** - European provider
+- **Custom** - Any OpenAI-compatible endpoint
+
+### Model Tiers
+
+Configure models for different intelligence levels:
+- **High** - Complex reasoning tasks
+- **Medium** - Standard operations
+- **Low** - Simple queries
+
+## Privacy
+
+- All data stays on your device
+- API keys stored locally in Chrome storage
+- Your data is only sent to the LLM provider you choose, with your API keys directly
+- No tracking or analytics send to anyone other than the LLM provider you choose
+- Option to use local LLMs
+- Open source
 
 ## Tech Stack
 
-- **Build**: esbuild
-- **UI**: Tailwind CSS + DaisyUI
-- **Templates**: Mustache
-- **LLM**: OpenRouter (Gemini, Llama, Qwen with cascading fallback)
+- TypeScript / ES Modules
+- Tailwind CSS + DaisyUI
+- esbuild bundler
+- Chrome Extension Manifest V3
+
+## License
+
+CC-BY-NC-4.0 (Creative Commons Attribution-NonCommercial 4.0)

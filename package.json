@@ -6,7 +6,7 @@
   "scripts": {
     "test": "find . \\( -name '*.test.js' -o -name '*.test.ts' \\) -not -path './node_modules/*' -exec npx tsx {} \\;",
     "typecheck": "tsc --noEmit",
-    "prebuild": "npm test && rm -rf dist && mkdir -p dist && cp manifest.json icon-*.png sidepanel.html dist/",
+    "prebuild": "npm test && rm -rf dist && mkdir -p dist/icons && cp manifest.json sidepanel.html dist/ && cp icons/*.png dist/icons/",
     "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",
     "build:css": "tailwindcss -i ./input.css -o ./dist/styles.css --minify",
     "zip": "mkdir -p release && VERSION=$(node -p \"require('./dist/manifest.json').version\") && cd dist && zip -r ../release/vishpr-extension-$VERSION.zip . && cd .. && echo \"Created release/vishpr-extension-$VERSION.zip\"",

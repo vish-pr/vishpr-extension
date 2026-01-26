@@ -30,17 +30,10 @@ class ChromeAPI {
   constructor() {
     this.tabs = new Map();
     this.tabErrors = new Map(); // Store network errors per tab
-    this.currentTabId = null;
-    this.currentTabUrl = null;
-    this.windowId = null;
+    this._lastActivatedTabId = null; // Track last tab activated by extension (for script execution)
     this._readyPromise = null;
     this._initTabListeners();
     this._initErrorListener();
-  }
-
-  setWindowId(windowId) {
-    this.windowId = windowId;
-    this._initCurrentTab();
   }
 
   async _persistState() {
@@ -56,20 +49,16 @@ class ChromeAPI {
 
   _initTabListeners() {
     chrome.tabs.onCreated.addListener(async (tab) => {
-      if (this.windowId && tab.windowId !== this.windowId) return;
       if (tab.id && tab.url) {
-        this._ensureTab(tab.id, tab.url);
+        this._ensureTab(tab.id, tab.url, tab.windowId);
         this._persistState();
       }
     });
 
     chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
-      if (this.windowId && windowId !== this.windowId) return;
-      this.currentTabId = tabId;
       try {
         const tab = await chrome.tabs.get(tabId);
-        this.currentTabUrl = tab.url;
-        this._ensureTab(tabId, tab.url);
+        this._ensureTab(tabId, tab.url, windowId);
         const tabState = this.tabs.get(tabId);
         if (tabState) tabState.lastVisitedAt = new Date().toISOString();
         this._persistState();
@@ -78,64 +67,39 @@ class ChromeAPI {
       }
     });
 
-    chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-      if (this.windowId) {
-        try {
-          const tab = await chrome.tabs.get(tabId);
-          if (tab.windowId !== this.windowId) return;
-        } catch { return; }
-      }
+    chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       if (changeInfo.url) {
-        if (tabId === this.currentTabId) {
-          this.currentTabUrl = changeInfo.url;
-        }
-        this._ensureTab(tabId, changeInfo.url);
+        this._ensureTab(tabId, changeInfo.url, tab.windowId);
         this._persistState();
       }
     });
 
-    chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-      if (this.windowId && removeInfo.windowId !== this.windowId) return;
+    chrome.tabs.onRemoved.addListener((tabId) => {
       this.tabs.delete(tabId);
       this._persistState();
     });
 
     chrome.tabs.onReplaced.addListener(async (addedTabId, removedTabId) => {
-      if (this.windowId) {
-        try {
-          const tab = await chrome.tabs.get(addedTabId);
-          if (tab.windowId !== this.windowId) return;
-        } catch { return; }
-      }
       const oldTab = this.tabs.get(removedTabId);
       if (oldTab) {
         oldTab.tabId = addedTabId;
         this.tabs.set(addedTabId, oldTab);
         this.tabs.delete(removedTabId);
       }
-      if (this.currentTabId === removedTabId) {
-        this.currentTabId = addedTabId;
-      }
       this._persistState();
     });
 
-    // Handle tab moving to a different window
+    // Handle tab moving to a different window - update the tab's windowId
     chrome.tabs.onAttached.addListener(async (tabId, { newWindowId }) => {
-      // If a tracked tab moves to a new window, update windowId and reinitialize
-      if (this.tabs.has(tabId) || tabId === this.currentTabId) {
-        this.windowId = newWindowId;
-        this._initCurrentTab();
-      }
-    });
-
-    chrome.tabs.onDetached.addListener((tabId, { oldWindowId }) => {
-      // Remove tab from tracking when it leaves the window
-      // It will be re-added by onAttached when it joins the new window
-      if (this.windowId && oldWindowId === this.windowId) {
-        this.tabs.delete(tabId);
+      const tabState = this.tabs.get(tabId);
+      if (tabState) {
+        tabState.windowId = newWindowId;
         this._persistState();
       }
     });
+
+    // onDetached: tab is temporarily detached, will be re-attached via onAttached
+    // No need to delete - just wait for onAttached to update windowId
 
     this._initCurrentTab();
   }
@@ -187,23 +151,12 @@ class ChromeAPI {
         // Clear existing tabs when reinitializing
         this.tabs.clear();
 
-        // Load tabs from current window only
-        const query = this.windowId ? { windowId: this.windowId } : {};
-        const allTabs = await chrome.tabs.query(query);
+        // Load ALL tabs from all windows
+        const allTabs = await chrome.tabs.query({});
         for (const tab of allTabs) {
           if (tab.id && tab.url) {
-            this._ensureTab(tab.id, tab.url);
+            this._ensureTab(tab.id, tab.url, tab.windowId);
           }
-        }
-
-        // Set current active tab
-        const activeQuery = this.windowId
-          ? { active: true, windowId: this.windowId }
-          : { active: true, currentWindow: true };
-        const [activeTab] = await chrome.tabs.query(activeQuery);
-        if (activeTab) {
-          this.currentTabId = activeTab.id;
-          this.currentTabUrl = activeTab.url;
         }
 
         this._persistState();
@@ -213,12 +166,13 @@ class ChromeAPI {
     })();
   }
 
-  _ensureTab(tabId, url) {
+  _ensureTab(tabId, url, windowId) {
     const now = new Date().toISOString();
     if (!this.tabs.has(tabId)) {
       this.tabs.set(tabId, {
         tabId,
         url,
+        windowId,
         openedAt: now,
         lastVisitedAt: now,
         urlHistory: [{ url, timestamp: now }],
@@ -226,6 +180,7 @@ class ChromeAPI {
       });
     } else {
       const tab = this.tabs.get(tabId);
+      if (windowId !== undefined) tab.windowId = windowId;
       if (tab.url !== url) {
         tab.url = url;
         tab.urlHistory.push({ url, timestamp: now });
@@ -253,26 +208,31 @@ class ChromeAPI {
   // --- Serialization (for persistence) ---
 
   toJSON() {
-    const json = { windowId: this.windowId, tabs: {} };
+    const json = { tabs: {} };
     for (const [tabId, tab] of Array.from(this.tabs)) json.tabs[tabId] = tab;
     return json;
   }
 
   // --- Browser State Formatting (for LLM context) ---
 
-  formatForChat() {
+  formatForChat(windowId, currentTabId, currentTabUrl) {
     const lines = ['=== BROWSER STATE ==='];
-    const currentTab = this.tabs.get(this.currentTabId);
 
-    lines.push(`Current Tab: ${this.currentTabId} - ${this.currentTabUrl || 'unknown'}`);
+    // Filter tabs by windowId
+    const windowTabs = Array.from(this.tabs.entries())
+      .filter(([, tab]) => tab.windowId === windowId);
+
+    const currentTab = this.tabs.get(currentTabId);
+
+    lines.push(`Current Tab: ${currentTabId} - ${currentTabUrl || 'unknown'}`);
     if (currentTab && currentTab.urlHistory.length > 1) {
       lines.push('History:');
       const history = currentTab.urlHistory.slice(-3, -1).reverse();
       history.forEach((e, i) => lines.push(`  ${i + 1}. ${e.url} (${e.timestamp})`));
     }
 
-    const otherTabs = Array.from(this.tabs.entries())
-      .filter(([tabId]) => tabId !== this.currentTabId)
+    const otherTabs = windowTabs
+      .filter(([tabId]) => tabId !== currentTabId)
       .sort((a, b) => (b[1].lastVisitedAt || '').localeCompare(a[1].lastVisitedAt || ''))
       .slice(0, 10);
 
@@ -331,9 +291,9 @@ class ChromeAPI {
     } catch { throw new Error('Tab no longer exists'); }
 
     // Switch to target tab if not active - ensures activeTab permission applies
-    if (tabId !== this.currentTabId) {
+    if (tabId !== this._lastActivatedTabId) {
       await chrome.tabs.update(tabId, { active: true });
-      this.currentTabId = tabId;
+      this._lastActivatedTabId = tabId;
       // Brief wait for tab activation
       await new Promise(r => setTimeout(r, 50));
     }
@@ -596,5 +556,14 @@ export function getChromeAPI() {
 export async function getBrowserStateBundle() {
   const api = getChromeAPI();
   await api.ready();
-  return api.formatForChat();
+
+  // Get current window and active tab dynamically
+  const currentWindow = await chrome.windows.getCurrent();
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
+
+  return api.formatForChat(
+    currentWindow.id,
+    activeTab?.id,
+    activeTab?.url
+  );
 }

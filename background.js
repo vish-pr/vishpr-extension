@@ -3,7 +3,6 @@ import { isInitialized } from './modules/llm/index.js';
 import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
 import { getAction, BROWSER_ROUTER } from './modules/actions/index.js';
 import logger from './modules/logger.js';
-import { getChromeAPI } from './modules/chrome-api.js';
 
 // Track panel open state per window
 const panelOpenState = new Map();
@@ -23,9 +22,6 @@ async function toggleSidePanel(windowId) {
   toggleLock.set(windowId, true);
 
   try {
-    const chromeAPI = getChromeAPI();
-    chromeAPI.setWindowId(windowId);
-
     if (panelOpenState.get(windowId)) {
       // Panel is open, close it - set state optimistically
       panelOpenState.set(windowId, false);
@@ -54,7 +50,6 @@ async function toggleSidePanel(windowId) {
 // Listen for messages from side panel and DevTools
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'panelOpened') {
-    // Get window ID from sender tab or use current window
     chrome.windows.getCurrent().then(window => {
       panelOpenState.set(window.id, true);
     });
