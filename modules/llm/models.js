@@ -52,15 +52,33 @@ export async function getCascadingModels(intelligence) {
 }
 
 export async function shouldSkip(endpoint, model, openrouterProvider) {
+  const counter = getModelStatsCounter();
   const key = modelStatsKey(endpoint, model, openrouterProvider);
-  const stats = await getModelStatsCounter().getStats(key);
-  const errors = stats?.error?.total || 0;
-  const skips = stats?.skip?.total || 0;
 
-  if (errors === 0) return false;
-  if (skips < errors) {
-    await getModelStatsCounter().increment(key, 'skip');
-    logger.info(`Skipping ${model}`, { errors, skips });
+  // Get latest entries for each type (sorted newest first)
+  const [successes, errors, skips] = await Promise.all([
+    counter.getEntries(key, 'success'),
+    counter.getEntries(key, 'error'),
+    counter.getEntries(key, 'skip')
+  ]);
+
+  const lastSuccess = successes[0]?.[0] || 0;
+  const lastError = errors[0]?.[0] || 0;
+
+  // If success is latest, try using model
+  if (lastSuccess >= lastError) return false;
+
+  // Error is latest - count errors after last success
+  const errorsSinceSuccess = errors.filter(([ts]) => ts > lastSuccess).length;
+  if (errorsSinceSuccess === 0) return false;
+
+  // Count skips after last error
+  const skipsSinceError = skips.filter(([ts]) => ts > lastError).length;
+
+  // Need that many skips before retrying
+  if (skipsSinceError < errorsSinceSuccess) {
+    await counter.increment(key, 'skip');
+    logger.info(`Skipping ${model}`, { errorsSinceSuccess, skipsSinceError });
     return true;
   }
   return false;
@@ -70,7 +88,6 @@ export async function recordSuccess(endpoint, model, openrouterProvider) {
   const counter = getModelStatsCounter();
   const key = modelStatsKey(endpoint, model, openrouterProvider);
   const provKey = providerStatsKey(endpoint);
-  await counter.reset(key, ['error', 'skip']);
   await counter.increment(key, 'success');
   await counter.increment(provKey, 'success');
 }
@@ -80,7 +97,6 @@ export async function recordError(endpoint, model, openrouterProvider) {
   const key = modelStatsKey(endpoint, model, openrouterProvider);
   const provKey = providerStatsKey(endpoint);
   await counter.increment(key, 'error');
-  await counter.reset(key, ['skip']);
   await counter.increment(provKey, 'error');
 }
 

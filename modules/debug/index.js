@@ -170,8 +170,8 @@ async function refreshStats() {
   try {
     // Force reload from storage
     await Promise.all([
-      getModelStatsCounter().reload(),
-      getActionStatsCounter().reload()
+      getModelStatsCounter().load(true),
+      getActionStatsCounter().load(true)
     ]);
     const timeFilter = getStatsTimeFilter();
     await Promise.all([renderModelStats(timeFilter), renderActionStats(timeFilter)]);

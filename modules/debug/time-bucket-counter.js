@@ -1,13 +1,12 @@
 /**
- * Simple Stats Counter - stores daily counts for last 30 days
- * Much simpler than the previous tiered bucket approach
+ * Simple Stats Counter - stores exact timestamps with limits:
+ * - Maximum 10,000 entries per counter
+ * - Maximum 30 days retention
+ * Whichever limit is reached first triggers cleanup.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const RETENTION_DAYS = 30;
-
-/** Get date key like "2024-01-25" from timestamp */
-const getDateKey = (ts = Date.now()) => new Date(ts).toISOString().slice(0, 10);
+const MAX_ENTRIES = 10000;
+const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export class StatsCounter {
   constructor(storageKey, storage = null) {
@@ -17,84 +16,55 @@ export class StatsCounter {
     this.loaded = false;
   }
 
-  async load() {
-    if (this.loaded) return;
+  async load(reload = false) {
+    if (this.loaded && !reload) return;
     if (this.storage) this.data = (await this.storage.get([this.storageKey]))[this.storageKey] || {};
     this.loaded = true;
   }
 
-  async reload() {
-    this.loaded = false;
-    await this.load();
-  }
-
-  async save() {
-    if (this.storage) await this.storage.set({ [this.storageKey]: this.data });
-  }
-
-  /** Prune entries older than 30 days */
-  _prune(counters) {
-    const cutoffDate = getDateKey(Date.now() - RETENTION_DAYS * DAY_MS);
-    for (const [type, daily] of Object.entries(counters)) {
-      if (typeof daily !== 'object') continue;
-      for (const date of Object.keys(daily)) {
-        if (date < cutoffDate) delete daily[date];
-      }
-    }
-  }
-
   async increment(key, counter = 'count', amount = 1) {
     await this.load();
-    const dateKey = getDateKey();
+    const timestamp = Date.now();
 
     this.data[key] ??= {};
-    this.data[key][counter] ??= {};
-    this.data[key][counter][dateKey] = (this.data[key][counter][dateKey] || 0) + amount;
+    this.data[key][counter] ??= [];
+    this.data[key][counter].push([timestamp, amount]);
 
-    // Prune old data periodically (when we have > 35 days)
-    if (Object.keys(this.data[key][counter]).length > 35) {
-      this._prune(this.data[key]);
-    }
-
-    await this.save();
-  }
-
-  /** Sum counts from a counter object, optionally filtered by time */
-  _sumCounts(daily, since = 0) {
-    if (!daily || typeof daily !== 'object') return 0;
-    const sinceDate = since > 0 ? getDateKey(since) : '';
-    return Object.entries(daily)
-      .filter(([date]) => date >= sinceDate)
-      .reduce((sum, [, count]) => sum + count, 0);
-  }
-
-  /** Get the most recent date with activity */
-  _getLastActivity(counters) {
-    let latest = '';
-    for (const [type, daily] of Object.entries(counters)) {
-      if (typeof daily !== 'object') continue;
-      for (const date of Object.keys(daily)) {
-        if (date > latest) latest = date;
+    // Prune when over limit: remove old entries, then cap at MAX_ENTRIES
+    if (this.data[key][counter].length > MAX_ENTRIES) {
+      const cutoff = Date.now() - RETENTION_MS;
+      let pruned = this.data[key][counter].filter(e => e[0] >= cutoff);
+      if (pruned.length > MAX_ENTRIES) {
+        pruned.sort((a, b) => b[0] - a[0]);
+        pruned = pruned.slice(0, MAX_ENTRIES);
       }
+      this.data[key][counter] = pruned;
     }
-    // Convert date string back to timestamp (end of that day for safety)
-    return latest ? new Date(latest + 'T23:59:59Z').getTime() : 0;
+
+    if (this.storage) await this.storage.set({ [this.storageKey]: this.data });
   }
 
   async getStats(key, since = 0) {
     await this.load();
     if (!this.data[key]) return null;
 
-    const counters = this.data[key];
     const stats = {};
-
-    for (const [type, daily] of Object.entries(counters)) {
-      if (typeof daily !== 'object') continue;
-      stats[type] = { total: this._sumCounts(daily, since) };
+    for (const [type, entries] of Object.entries(this.data[key])) {
+      if (!Array.isArray(entries)) continue;
+      stats[type] = {
+        total: entries.filter(([ts]) => ts >= since).reduce((sum, [, amount]) => sum + amount, 0)
+      };
     }
 
-    stats._lastActivity = this._getLastActivity(counters);
     return stats;
+  }
+
+  /** Get raw entries for a key/counter, returns [[timestamp, amount], ...] sorted by timestamp desc */
+  async getEntries(key, counter) {
+    await this.load();
+    const entries = this.data[key]?.[counter];
+    if (!Array.isArray(entries)) return [];
+    return [...entries].sort((a, b) => b[0] - a[0]);
   }
 
   async getAllStats(since = 0) {
@@ -105,25 +75,7 @@ export class StatsCounter {
     }
     return result;
   }
-
-  async reset(key = null, types = null) {
-    await this.load();
-    if (key && types?.length) {
-      if (this.data[key]) {
-        for (const type of types) delete this.data[key][type];
-        if (!Object.keys(this.data[key]).length) delete this.data[key];
-      }
-    } else if (key) {
-      delete this.data[key];
-    } else {
-      this.data = {};
-    }
-    await this.save();
-  }
 }
-
-// Keep the old class name as alias for compatibility
-export { StatsCounter as TimeBucketCounter };
 
 let modelStatsCounter = null;
 
@@ -136,8 +88,8 @@ export function providerStatsKey(endpoint) {
 }
 
 export function getModelStatsCounter() {
-  // Use new storage key to start fresh with simplified format
-  return modelStatsCounter ??= new StatsCounter('modelStatsV3', {
+  // Use new storage key to start fresh with exact timestamp format
+  return modelStatsCounter ??= new StatsCounter('modelStatsV4', {
     get: keys => chrome.storage.local.get(keys),
     set: items => chrome.storage.local.set(items)
   });
@@ -146,8 +98,8 @@ export function getModelStatsCounter() {
 let actionStatsCounter = null;
 
 export function getActionStatsCounter() {
-  // Use new storage key to start fresh with simplified format
-  return actionStatsCounter ??= new StatsCounter('actionStatsV3', {
+  // Use new storage key to start fresh with exact timestamp format
+  return actionStatsCounter ??= new StatsCounter('actionStatsV4', {
     get: keys => chrome.storage.local.get(keys),
     set: items => chrome.storage.local.set(items)
   });

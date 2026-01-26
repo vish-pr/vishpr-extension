@@ -13,6 +13,8 @@ import {
   fetchAvailableProviders,
   verifyApiKey,
   verifyModel,
+  recordSuccess,
+  recordError,
   PREDEFINED_ENDPOINTS,
   OPENROUTER_ID
 } from './llm/index.js';
@@ -196,7 +198,7 @@ function setupEndpointsSection() {
 // ============ Models ============
 
 async function verifyAllModels() {
-  const tasks = [], counter = getModelStatsCounter(), /** @type {Set<string>} */ tiersToRender = new Set();
+  const tasks = [], /** @type {Set<string>} */ tiersToRender = new Set();
   let needsSave = false;
 
   // First pass: mark all models as verifying
@@ -224,7 +226,7 @@ async function verifyAllModels() {
           currentModels[tier][i] = [ep, m, prov, result.noToolChoice || noTool, result.noToolUse || noToolUse];
           needsSave = true;
         }
-        await counter.increment(modelStatsKey(ep, m, prov), result.valid ? 'success' : 'error');
+        await (result.valid ? recordSuccess(ep, m, prov) : recordError(ep, m, prov));
         renderTierModels(tier);
       }));
     }
@@ -376,7 +378,7 @@ async function handleModelSave(tier, index) {
   addMessage('system', `Verifying ${model}...`);
 
   const result = await verifyModel(endpoint, model, openrouterProvider);
-  await getModelStatsCounter().increment(modelStatsKey(endpoint, model, openrouterProvider), result.valid ? 'success' : 'error');
+  await (result.valid ? recordSuccess(endpoint, model, openrouterProvider) : recordError(endpoint, model, openrouterProvider));
   saveBtn.disabled = false; saveBtn.innerHTML = originalHtml;
 
   verificationStatus.set(`${tier}:${index}`, { verified: result.valid, error: result.error });

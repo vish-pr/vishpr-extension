@@ -114,6 +114,8 @@ export {
   fetchModelsForEndpoint,
   verifyApiKey,
   verifyModel,
+  recordSuccess,
+  recordError,
   PREDEFINED_ENDPOINTS,
   OPENROUTER_ID,
   CEREBRAS_ID,

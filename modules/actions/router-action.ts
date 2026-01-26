@@ -9,6 +9,7 @@ import { LLM_TOOL } from './llm-action.js';
 import { USER_CLARIFICATION } from './clarification-actions.js';
 import { CRITIQUE } from './critique-action.js';
 import { PREFERENCE_EXTRACTOR } from './preference-extractor-action.js';
+import { CONTEXT_SELECTOR } from './context-selector-action.js';
 
 export const BROWSER_ROUTER = 'BROWSER_ROUTER';
 
@@ -22,19 +23,24 @@ export const routerAction: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      user_message: {
+      goal: {
         type: 'string',
-        description: 'The user\'s natural language request'
+        description: 'The goal to accomplish'
       }
     },
-    required: ['user_message'],
-    additionalProperties: false
+    required: ['goal'],
+    additionalProperties: true
   },
   steps: [
+    // Step 1: Select relevant context
+    {
+      type: 'action',
+      action: CONTEXT_SELECTOR
+    },
+    // Step 2: Route with filtered context
     {
       type: 'llm',
       system_prompt: `You route user requests to appropriate tools.
-Current time: {{{current_datetime}}}
 
 # Critical Rules
 MUST: Select ONE tool per turn. Never skip tool selection.
@@ -122,14 +128,18 @@ Query: "Page won't load" (after 2 failed attempts)
 Select exactly ONE tool. Use FINAL_RESPONSE when done or stuck.`,
       message: `Route this request.
 
-Browser: {{{browser_state}}}
-Goal: {{{user_message}}}
+Context:
+{{{context}}}
+
+Goal: {{{goal}}}
 
 Select ONE tool. Use {{{stop_action}}} when objective complete or after 2 failed attempts.`,
       continuation_message: `Previous action completed. Review the result above.
 
-Browser: {{{browser_state}}}
-Goal: {{{user_message}}}
+Context:
+{{{context}}}
+
+Goal: {{{goal}}}
 
 Decision:
 - If the goal is FULLY satisfied by the previous result → use {{{stop_action}}} immediately

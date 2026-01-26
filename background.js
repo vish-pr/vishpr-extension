@@ -90,7 +90,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleUserMessage({ message }) {
   const actionName = BROWSER_ROUTER;
-  const params = { user_message: message };
+  const params = { goal: message };
 
   try {
     if (!(await isInitialized())) {

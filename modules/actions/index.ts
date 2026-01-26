@@ -10,6 +10,7 @@ import { critiqueAction } from './critique-action.js';
 import { knowledgeBaseActions } from './knowledge-base-action.js';
 import { clarificationActions } from './clarification-actions.js';
 import { preferenceExtractorActions } from './preference-extractor-action.js';
+import { contextSelectorActions } from './context-selector-action.js';
 import logger from '../logger.js';
 
 // Re-export constants
@@ -21,6 +22,7 @@ export { CRITIQUE } from './critique-action.js';
 export { RIDDLER, ANSWERER, CHECKER, ADAPTAR, KNOWLEDGE_BASE_ADAPTOR } from './knowledge-base-action.js';
 export { USER_CLARIFICATION } from './clarification-actions.js';
 export { PREFERENCE_EXTRACTOR } from './preference-extractor-action.js';
+export { CONTEXT_SELECTOR } from './context-selector-action.js';
 export type { ClarificationAnswer } from './clarification-actions.js';
 
 // Re-export types
@@ -36,7 +38,8 @@ const allActions: Action[] = [
   critiqueAction,
   ...knowledgeBaseActions,
   ...clarificationActions,
-  ...preferenceExtractorActions
+  ...preferenceExtractorActions,
+  ...contextSelectorActions
 ];
 
 export const actionsRegistry: ActionsRegistry = Object.fromEntries(

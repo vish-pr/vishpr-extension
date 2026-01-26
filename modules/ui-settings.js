@@ -296,8 +296,6 @@ function groupStatsByPrefix(stats) {
   const groups = { _root: {} };
 
   for (const [key, value] of Object.entries(stats)) {
-    // Skip internal keys
-    if (key === '_lastActivity') continue;
     const total = value?.total ?? value;
     if (typeof total !== 'number') continue;
 

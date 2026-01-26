@@ -5,6 +5,7 @@
 import type { Action, Message, StepContext, StepResult, JSONSchema } from './types/index.js';
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE } from './final-response-action.js';
+import { CONTEXT_SELECTOR } from './context-selector-action.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
 // Schema for LLM content cleaning output
@@ -637,15 +638,21 @@ export const browserActionRouter: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      instructions: {
+      goal: {
         type: 'string',
-        description: 'Detailed instructions from router about what to accomplish'
+        description: 'The goal to accomplish'
       }
     },
-    required: ['instructions'],
+    required: ['goal'],
     additionalProperties: true
   },
   steps: [
+    // Step 1: Select relevant context
+    {
+      type: 'action',
+      action: CONTEXT_SELECTOR
+    },
+    // Step 2: Execute browser actions with filtered context
     {
       type: 'llm',
       system_prompt: `You automate browser interactions.
@@ -722,14 +729,18 @@ Task: "Go to amazon.com and search"
 READ_PAGE first for element IDs. Use FINAL_RESPONSE when done or stuck.`,
       message: `Execute browser interaction.
 
-Browser: {{{browser_state}}}
-Goal: {{{instructions}}}
+Context:
+{{{context}}}
+
+Goal: {{{goal}}}
 
 If no element IDs available, READ_PAGE first. Use {{{stop_action}}} when done or after 2 failed attempts.`,
       continuation_message: `Previous action completed. Review the result above.
 
-Browser: {{{browser_state}}}
-Goal: {{{instructions}}}
+Context:
+{{{context}}}
+
+Goal: {{{goal}}}
 
 Decision:
 - If the goal is FULLY achieved → use {{{stop_action}}} immediately
