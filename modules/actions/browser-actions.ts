@@ -796,9 +796,6 @@ If no page exists, use CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB first.
 Use FINAL_RESPONSE to terminate.`,
       message: `Execute browser interaction.
 
-Context:
-{{{context}}}
-
 <current_browser_tabs>
 {{{browser_state}}}
 </current_browser_tabs>
