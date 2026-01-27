@@ -1,4 +1,4 @@
-# Vishpr Browser Agent
+# vishpr Browser Agent
 
 A Chrome extension that automates web browsing through natural language commands. Tell Vishpr what to do in plain English, and watch it click, fill forms, navigate, and extract information for you.
 

@@ -68,12 +68,12 @@ function renderToolCalls(toolCalls) {
   }).join('');
 }
 
-// Find CRITIQUE child action result from trace tree
+// Find TRACE_ANALYZER child action result from trace tree
 function findCritiqueResult(trace) {
   if (!trace?.children) return null;
-  // Critique is attached directly to root action's children
+  // Trace analyzer is attached directly to root action's children
   for (const child of trace.children) {
-    if (child.type === 'action' && child.name === 'CRITIQUE' && child.output?.result) {
+    if (child.type === 'action' && child.name === 'TRACE_ANALYZER' && child.output?.result) {
       return child.output.result;
     }
   }

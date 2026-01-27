@@ -6,10 +6,9 @@ import { browserActions, BROWSER_ACTION_ROUTER } from './browser-actions.js';
 import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
 import { LLM_ACTION } from './llm-action.js';
 import { ROUTER_ACTION } from './router-action.js';
-import { CRITIQUE_ACTION } from './critique-action.js';
 import { knowledgeBaseActions } from './knowledge-base-action.js';
 import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
-import { PREFERENCE_EXTRACTOR_ACTION } from './preference-extractor-action.js';
+import { TRACE_ANALYZER_ACTION } from './trace-analyzer-action.js';
 import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
 import logger from '../logger.js';
 
@@ -25,10 +24,9 @@ const allActions: Action[] = [
   LLM_ACTION,
   ROUTER_ACTION,
   BROWSER_ACTION_ROUTER,
-  CRITIQUE_ACTION,
+  TRACE_ANALYZER_ACTION,
   ...knowledgeBaseActions,
   USER_CLARIFICATION_ACTION,
-  PREFERENCE_EXTRACTOR_ACTION,
   CONTEXT_SELECTOR_ACTION
 ];
 

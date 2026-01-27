@@ -125,6 +125,11 @@ export async function executeAction(action, params, parent_messages = null, trac
           break;
         }
         case 'action': {
+          // Check condition if defined
+          if (step.condition && !step.condition(context)) {
+            traceWritePromises.push(tracer.endStep(actionUUID, i, stepStartTime, { skipped: true }));
+            continue;
+          }
           const childUUID = `${actionUUID}_${i}_${crypto.randomUUID()}`;
           stepOutput = await executeAction(
             actionsRegistry[step.action],

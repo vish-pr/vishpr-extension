@@ -7,8 +7,7 @@ import { BROWSER_ACTION_ROUTER } from './browser-actions.js';
 import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
 import { LLM_ACTION } from './llm-action.js';
 import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
-import { CRITIQUE_ACTION } from './critique-action.js';
-import { PREFERENCE_EXTRACTOR_ACTION } from './preference-extractor-action.js';
+import { TRACE_ANALYZER_ACTION } from './trace-analyzer-action.js';
 import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
 
 /**
@@ -156,7 +155,6 @@ Decision:
     }
   ],
   post_steps: [
-    { type: 'action', action: CRITIQUE_ACTION.name },
-    { type: 'action', action: PREFERENCE_EXTRACTOR_ACTION.name }
+    { type: 'action', action: TRACE_ANALYZER_ACTION.name }
   ]
 };
