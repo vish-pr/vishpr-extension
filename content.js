@@ -1,19 +1,23 @@
 // Content Script - runs on all web pages
 import { ContentAction } from './modules/content-actions.js';
 import { cleanDOM } from './modules/utils/clean-dom.js';
+import { buildAccessibilityTree, serializeForLLM } from './modules/a11y-tree.js';
 
 const isMac = navigator.platform.toLowerCase().includes('mac');
 
 const handlers = {
   [ContentAction.EXTRACT_CONTENT]: () => extractPageContent(),
-  [ContentAction.CLICK_ELEMENT]: (msg) => clickElement(msg.elementId, msg.modifiers),
-  [ContentAction.FILL_FORM]: (msg) => fillFormFields(msg.fields, msg.submit, msg.submitElementId),
+  [ContentAction.CLICK_ELEMENT]: (msg) => clickElement(msg.ref, msg.modifiers),
+  [ContentAction.FILL_FORM]: (msg) => fillFormFields(msg.fields, msg.submit, msg.submitRef),
   [ContentAction.SCROLL_AND_WAIT]: (msg) => scrollAndWait(msg.direction, msg.pixels, msg.waitMs),
-  [ContentAction.HOVER_ELEMENT]: (msg) => hoverElement(msg.elementId),
+  [ContentAction.HOVER_ELEMENT]: (msg) => hoverElement(msg.ref),
   [ContentAction.PRESS_KEY]: (msg) => pressKey(msg.key, msg.modifiers),
   [ContentAction.HANDLE_DIALOG]: (msg) => handleDialog(msg.accept, msg.promptText),
   [ContentAction.GET_DIALOGS]: () => getDialogs(),
-  [ContentAction.EXTRACT_ACCESSIBILITY_TREE]: () => extractAccessibilityTree()
+  [ContentAction.EXTRACT_ACCESSIBILITY_TREE]: () => extractAccessibilityTree(),
+  [ContentAction.SELECT_OPTION]: (msg) => selectOption(msg.ref, msg.value),
+  [ContentAction.CHECK_CHECKBOX]: (msg) => checkCheckbox(msg.ref, msg.checked),
+  [ContentAction.SUBMIT_FORM]: (msg) => submitForm(msg.ref)
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -35,6 +39,18 @@ function cleanField(value, maxLen = 30) {
   const cleaned = String(value).trim().replace(/\s+/g, ' ');
   if (!cleaned) return null;
   return cleaned.length > maxLen ? cleaned.substring(0, maxLen) : cleaned;
+}
+
+/**
+ * Look up a DOM element by ref (e.g., "e1", "e34")
+ * Uses the refMap stored by extractAccessibilityTree()
+ * @param {string} ref - Element ref like "e1", "e34"
+ * @returns {Element|null} The DOM element or null if not found
+ */
+function getElementByRef(ref) {
+  const refMap = window.__vishRefMap;
+  if (!refMap) return null;
+  return refMap[ref] || null;
 }
 
 
@@ -234,7 +250,7 @@ async function extractPageContent() {
 
 /**
  * Click an element with optional modifiers
- * @param {number} elementId - Element ID from READ_PAGE
+ * @param {string} ref - Element ref from READ_PAGE (e.g., "e1", "e34")
  * @param {Object} modifiers - Click modifiers object
  * @param {boolean} modifiers.newTab - Open in new background tab (Ctrl/Cmd+Click)
  * @param {boolean} modifiers.newTabActive - Open in new foreground tab (Ctrl/Cmd+Shift+Click)
@@ -245,12 +261,12 @@ async function extractPageContent() {
  * @param {boolean} modifiers.altKey - Custom: Alt key pressed
  * @returns {Object} Result object with success status
  */
-function clickElement(elementId, modifiers = {}) {
+function clickElement(ref, modifiers = {}) {
   try {
-    const element = document.querySelector(`[data-vish-id="${elementId}"]`);
+    const element = getElementByRef(ref);
 
     if (!element) {
-      return { success: false, message: `Element not found with ID: ${elementId}` };
+      return { success: false, message: `Element not found with ref: ${ref}` };
     }
 
     // Build click modifiers based on options
@@ -261,7 +277,7 @@ function clickElement(elementId, modifiers = {}) {
       element.click();
       return {
         success: true,
-        message: `Clicked element ID: ${elementId}`,
+        message: `Clicked element ref: ${ref}`,
         modifiers: 'none'
       };
     }
@@ -281,7 +297,7 @@ function clickElement(elementId, modifiers = {}) {
 
     return {
       success: true,
-      message: `Clicked element ID ${elementId} with modifiers`,
+      message: `Clicked element ref ${ref} with modifiers`,
       modifiers: clickModifiers
     };
   } catch (error) {
@@ -335,22 +351,22 @@ function hasModifiers(modifiers) {
 }
 
 // Form filling with validation
-function fillFormFields(fields, shouldSubmit, submitElementId) {
+function fillFormFields(fields, shouldSubmit, submitRef) {
   // Fill all fields
   const results = fields.map(field => {
-    const element = document.querySelector(`[data-vish-id="${field.elementId}"]`);
+    const element = getElementByRef(field.ref);
     if (element) {
       element.value = field.value;
       element.dispatchEvent(new Event('input', { bubbles: true }));
       element.dispatchEvent(new Event('change', { bubbles: true }));
-      return { elementId: field.elementId, success: true };
+      return { ref: field.ref, success: true };
     }
-    return { elementId: field.elementId, success: false, error: 'Not found' };
+    return { ref: field.ref, success: false, error: 'Not found' };
   });
 
   // Submit if requested
-  if (shouldSubmit && submitElementId !== undefined) {
-    const submitBtn = document.querySelector(`[data-vish-id="${submitElementId}"]`);
+  if (shouldSubmit && submitRef !== undefined) {
+    const submitBtn = getElementByRef(submitRef);
     results.push({
       submit: true,
       success: !!submitBtn,
@@ -394,11 +410,11 @@ async function scrollAndWait(direction, pixels, waitMs = 500) {
 // HOVER ELEMENT
 // ============================================================================
 
-function hoverElement(elementId) {
+function hoverElement(ref) {
   try {
-    const element = document.querySelector(`[data-vish-id="${elementId}"]`);
+    const element = getElementByRef(ref);
     if (!element) {
-      return { success: false, error: `Element not found with ID: ${elementId}` };
+      return { success: false, error: `Element not found with ref: ${ref}` };
     }
 
     const rect = element.getBoundingClientRect();
@@ -417,7 +433,7 @@ function hoverElement(elementId) {
     element.dispatchEvent(new MouseEvent('mouseover', eventOptions));
     element.dispatchEvent(new MouseEvent('mousemove', eventOptions));
 
-    return { success: true, elementId };
+    return { success: true, ref };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -552,195 +568,93 @@ function getDialogs() {
 // ACCESSIBILITY TREE EXTRACTION
 // ============================================================================
 
-// Role mapping based on HTML tag
-const IMPLICIT_ROLES = {
-  a: 'link', button: 'button', h1: 'heading', h2: 'heading', h3: 'heading',
-  h4: 'heading', h5: 'heading', h6: 'heading', img: 'img', input: 'textbox',
-  select: 'combobox', textarea: 'textbox', nav: 'navigation', main: 'main',
-  header: 'banner', footer: 'contentinfo', article: 'article', section: 'region',
-  aside: 'complementary', form: 'form', table: 'table', ul: 'list', ol: 'list',
-  li: 'listitem', dialog: 'dialog', progress: 'progressbar', meter: 'meter'
-};
-
-const INPUT_TYPE_ROLES = {
-  checkbox: 'checkbox', radio: 'radio', range: 'slider', button: 'button',
-  submit: 'button', reset: 'button', search: 'searchbox', email: 'textbox',
-  tel: 'textbox', url: 'textbox', number: 'spinbutton'
-};
-
-function computeRole(element) {
-  // Explicit role takes precedence
-  const explicit = element.getAttribute('role');
-  if (explicit) return explicit;
-
-  const tag = element.tagName.toLowerCase();
-
-  // Special handling for inputs
-  if (tag === 'input') {
-    const type = element.getAttribute('type') || 'text';
-    return INPUT_TYPE_ROLES[type] || 'textbox';
-  }
-
-  return IMPLICIT_ROLES[tag] || null;
-}
-
-function computeAccessibleName(element) {
-  // aria-label takes precedence
-  const ariaLabel = element.getAttribute('aria-label');
-  if (ariaLabel) return ariaLabel.trim();
-
-  // aria-labelledby
-  const labelledBy = element.getAttribute('aria-labelledby');
-  if (labelledBy) {
-    const names = labelledBy.split(/\s+/)
-      .map(id => document.getElementById(id)?.textContent?.trim())
-      .filter(Boolean);
-    if (names.length) return names.join(' ');
-  }
-
-  // For inputs, check associated label
-  if (element.id) {
-    const label = document.querySelector(`label[for="${element.id}"]`);
-    if (label) return label.textContent?.trim() || '';
-  }
-
-  // alt for images
-  if (element.tagName.toLowerCase() === 'img') {
-    return element.getAttribute('alt') || '';
-  }
-
-  // title attribute
-  const title = element.getAttribute('title');
-  if (title) return title.trim();
-
-  // placeholder for inputs
-  if (element.placeholder) return element.placeholder;
-
-  // Text content for simple elements
-  const text = element.textContent?.trim();
-  if (text && text.length <= 100) return text;
-
-  return '';
-}
-
-function isInteractive(element) {
-  const tag = element.tagName.toLowerCase();
-  if (['a', 'button', 'input', 'select', 'textarea'].includes(tag)) return true;
-  if (element.getAttribute('tabindex') !== null) return true;
-  if (element.getAttribute('onclick')) return true;
-  if (element.getAttribute('role')?.match(/button|link|checkbox|radio|textbox|combobox|slider|switch|tab|menuitem/)) return true;
-  return false;
-}
-
-function isHidden(element) {
-  if (element.hidden) return true;
-  if (element.getAttribute('aria-hidden') === 'true') return true;
-  const style = window.getComputedStyle(element);
-  if (style.display === 'none' || style.visibility === 'hidden') return true;
-  return false;
-}
-
-function buildAccessibilityTree() {
-  const refMap = {};
-  let refCounter = 0;
-
-  function processNode(element, depth = 0) {
-    if (isHidden(element)) return null;
-
-    const role = computeRole(element);
-    const name = computeAccessibleName(element);
-    const interactive = isInteractive(element);
-
-    // Skip non-semantic elements without meaningful content
-    if (!role && !name && !interactive && element.children.length === 0) {
-      return null;
-    }
-
-    const node = {};
-
-    // Assign ref for interactive elements
-    if (interactive || role) {
-      const ref = `e${++refCounter}`;
-      node.ref = ref;
-      refMap[ref] = element;
-      element.setAttribute('data-vish-ref', ref);
-    }
-
-    if (role) node.role = role;
-    if (name) node.name = name.substring(0, 100);
-
-    // Add state info
-    if (element.checked !== undefined) node.checked = element.checked;
-    if (element.selected) node.selected = true;
-    if (element.disabled) node.disabled = true;
-    if (element.getAttribute('aria-expanded')) node.expanded = element.getAttribute('aria-expanded') === 'true';
-    if (element.value && element.tagName.match(/INPUT|TEXTAREA|SELECT/i)) {
-      node.value = String(element.value).substring(0, 50);
-    }
-
-    // Process children
-    const children = [];
-    for (const child of element.children) {
-      const childNode = processNode(child, depth + 1);
-      if (childNode) children.push(childNode);
-    }
-
-    if (children.length > 0) {
-      node.children = children;
-    }
-
-    return node;
-  }
-
-  const tree = processNode(document.body);
-
-  // Store refMap globally for lookups
-  window.__vishRefMap = refMap;
-
-  return tree;
-}
-
-function serializeForLLM(tree, indent = 0) {
-  if (!tree) return '';
-
-  const pad = '  '.repeat(indent);
-  let lines = [];
-
-  let desc = '';
-  if (tree.ref) desc += `[${tree.ref}] `;
-  if (tree.role) desc += tree.role;
-  if (tree.name) desc += ` "${tree.name}"`;
-  if (tree.checked !== undefined) desc += tree.checked ? ' (checked)' : ' (unchecked)';
-  if (tree.disabled) desc += ' (disabled)';
-  if (tree.expanded !== undefined) desc += tree.expanded ? ' (expanded)' : ' (collapsed)';
-  if (tree.value) desc += ` value="${tree.value}"`;
-
-  if (desc.trim()) {
-    lines.push(pad + desc.trim());
-  }
-
-  if (tree.children) {
-    for (const child of tree.children) {
-      lines.push(serializeForLLM(child, indent + 1));
-    }
-  }
-
-  return lines.filter(Boolean).join('\n');
-}
-
 function extractAccessibilityTree() {
   try {
-    const tree = buildAccessibilityTree();
+    const { tree, refCount, refMap } = buildAccessibilityTree(document);
     const serialized = serializeForLLM(tree);
+
+    // Store refMap globally for lookups
+    window.__vishRefMap = refMap;
 
     return {
       success: true,
-      mode: 'a11y',
+      title: document.title,
+      url: window.location.href,
       content: serialized,
-      refCount: Object.keys(window.__vishRefMap || {}).length
+      refCount
     };
   } catch (error) {
     return { success: false, error: error.message };
+  }
+}
+
+// ============================================================================
+// SELECT OPTION
+// ============================================================================
+
+function selectOption(ref, value) {
+  try {
+    const select = getElementByRef(ref);
+    if (!select || select.tagName !== 'SELECT') {
+      return { selected: false, error: `Select element not found with ref: ${ref}` };
+    }
+
+    const option = Array.from(select.options).find(opt => opt.value === value || opt.text === value);
+    if (option) {
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return { selected: true, ref, value: option.value, text: option.text };
+    }
+    return { selected: false, error: 'Option not found' };
+  } catch (error) {
+    return { selected: false, error: error.message };
+  }
+}
+
+// ============================================================================
+// CHECK CHECKBOX
+// ============================================================================
+
+function checkCheckbox(ref, shouldCheck) {
+  try {
+    const checkbox = getElementByRef(ref);
+    if (!checkbox || checkbox.type !== 'checkbox') {
+      return { modified: false, error: `Checkbox not found with ref: ${ref}` };
+    }
+
+    if (checkbox.checked !== shouldCheck) {
+      checkbox.checked = shouldCheck;
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      return { modified: true, checked: shouldCheck, ref };
+    }
+    return { modified: false, checked: shouldCheck, ref, note: 'Already in desired state' };
+  } catch (error) {
+    return { modified: false, error: error.message };
+  }
+}
+
+// ============================================================================
+// SUBMIT FORM
+// ============================================================================
+
+function submitForm(ref) {
+  try {
+    const element = getElementByRef(ref);
+    if (!element) {
+      return { submitted: false, error: `Element not found with ref: ${ref}` };
+    }
+
+    if (element.tagName === 'BUTTON' || element.tagName === 'INPUT') {
+      element.click();
+      return { submitted: true, method: 'click', ref };
+    }
+    if (element.tagName === 'FORM') {
+      element.submit();
+      return { submitted: true, method: 'submit', ref };
+    }
+    return { submitted: false, error: 'Element is not a form or submit button' };
+  } catch (error) {
+    return { submitted: false, error: error.message };
   }
 }
 

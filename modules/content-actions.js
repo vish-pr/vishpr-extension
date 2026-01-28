@@ -7,5 +7,8 @@ export const ContentAction = {
   PRESS_KEY: 'pressKey',
   HANDLE_DIALOG: 'handleDialog',
   GET_DIALOGS: 'getDialogs',
-  EXTRACT_ACCESSIBILITY_TREE: 'extractAccessibilityTree'
+  EXTRACT_ACCESSIBILITY_TREE: 'extractAccessibilityTree',
+  SELECT_OPTION: 'selectOption',
+  CHECK_CHECKBOX: 'checkCheckbox',
+  SUBMIT_FORM: 'submitForm'
 };

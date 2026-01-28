@@ -35,10 +35,63 @@ class ChromeAPI {
     this._lastActivatedTabId = null; // Track last tab activated by extension (for script execution)
     this._pendingNavigation = new Map(); // Map<tabId, 'back' | 'forward'> - tracks navigation intent
     this._readyPromise = null;
+
+    // Tab alias system: t1, t2, etc. - never reuse aliases within a session
+    this._tabAliasCounter = 0;
+    this._tabIdToAlias = new Map(); // Map<realTabId, alias>
+    this._aliasToTabId = new Map(); // Map<alias, realTabId>
+
     this._initTabListeners();
     this._initErrorListener();
     this._initNavListeners();
     this._initNetworkTracking();
+  }
+
+  /**
+   * Get or create a stable alias for a tab ID
+   * @param {number} tabId - Real Chrome tab ID
+   * @returns {string} Alias like "t1", "t2"
+   */
+  _getTabAlias(tabId) {
+    if (this._tabIdToAlias.has(tabId)) {
+      return this._tabIdToAlias.get(tabId);
+    }
+    const alias = `t${++this._tabAliasCounter}`;
+    this._tabIdToAlias.set(tabId, alias);
+    this._aliasToTabId.set(alias, tabId);
+    return alias;
+  }
+
+  /**
+   * Resolve a tab alias or real ID to real tab ID
+   * @param {string|number} tabIdOrAlias - Alias like "t1" or real tab ID
+   * @returns {number|null} Real tab ID or null if not found
+   */
+  resolveTabId(tabIdOrAlias) {
+    // If it's already a number, return it
+    if (typeof tabIdOrAlias === 'number') return tabIdOrAlias;
+
+    // If it's a string alias like "t1"
+    if (typeof tabIdOrAlias === 'string') {
+      // Check if it's an alias
+      if (this._aliasToTabId.has(tabIdOrAlias)) {
+        return this._aliasToTabId.get(tabIdOrAlias);
+      }
+      // Try parsing as number (for backwards compatibility)
+      const parsed = parseInt(tabIdOrAlias, 10);
+      if (!isNaN(parsed)) return parsed;
+    }
+
+    return null;
+  }
+
+  /**
+   * Get alias for display, creating if needed
+   * @param {number} tabId - Real Chrome tab ID
+   * @returns {string} Alias like "t1"
+   */
+  getTabAlias(tabId) {
+    return this._getTabAlias(tabId);
   }
 
   async _persistState() {
@@ -265,8 +318,9 @@ class ChromeAPI {
       .filter(([, tab]) => tab.windowId === windowId);
 
     const currentTab = this.tabs.get(currentTabId);
+    const currentAlias = this._getTabAlias(currentTabId);
 
-    lines.push(`Current Tab: ${currentTabId} - ${currentTabUrl || 'unknown'}`);
+    lines.push(`Current Tab: ${currentAlias} - ${currentTabUrl || 'unknown'}`);
 
     if (currentTab && currentTab.history.length > 1) {
       const nav = this.getNavigationStatus(currentTabId);
@@ -300,7 +354,10 @@ class ChromeAPI {
     if (otherTabs.length > 0) {
       lines.push('');
       lines.push('Other Tabs (by recent activity):');
-      otherTabs.forEach(([tabId, tab], i) => lines.push(`  ${i + 1}. ${tabId} - ${tab.url}`));
+      otherTabs.forEach(([tabId, tab]) => {
+        const alias = this._getTabAlias(tabId);
+        lines.push(`  ${alias} - ${tab.url}`);
+      });
     }
 
     return lines.join('\n');
@@ -327,7 +384,11 @@ class ChromeAPI {
     throw Object.assign(new Error(`Cannot read page: ${detail}`), { code: 'BROWSER_ERROR_PAGE', url });
   }
 
-  async _executeContentScript(tabId, action, params = {}) {
+  async _executeContentScript(tabIdOrAlias, action, params = {}) {
+    // Resolve tab alias to real ID
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     try { await chrome.tabs.get(tabId); } catch { throw new Error('Tab no longer exists'); }
 
     if (tabId !== this._lastActivatedTabId) {
@@ -399,7 +460,10 @@ class ChromeAPI {
     return { ...result, navigated: true, new_url: urlAfter };
   }
 
-  async _executeScript(tabId, func, args = []) {
+  async _executeScript(tabIdOrAlias, func, args = []) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     const result = await chrome.scripting.executeScript({
       target: { tabId },
       func,
@@ -435,68 +499,34 @@ class ChromeAPI {
     };
   }
 
-  async clickElement(tabId, elementId, modifiers = {}) {
-    return this._executeContentScript(tabId, ContentAction.CLICK_ELEMENT, { elementId, modifiers });
+  async clickElement(tabId, ref, modifiers = {}) {
+    return this._executeContentScript(tabId, ContentAction.CLICK_ELEMENT, { ref, modifiers });
   }
 
-  async fillForm(tabId, fields, submit = false, submitElementId) {
-    return this._executeContentScript(tabId, ContentAction.FILL_FORM, { fields, submit, submitElementId });
+  async fillForm(tabId, fields, submit = false, submitRef) {
+    return this._executeContentScript(tabId, ContentAction.FILL_FORM, { fields, submit, submitRef });
   }
 
-  async selectOption(tabId, elementId, value) {
-    return this._executeScript(tabId, (elementId, value) => {
-      const select = /** @type {HTMLSelectElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
-      if (!select || select.tagName !== 'SELECT') {
-        return { selected: false, error: 'Select element not found' };
-      }
-      const option = Array.from(select.options).find(opt => opt.value === value || opt.text === value);
-      if (option) {
-        select.value = option.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        return { selected: true, elementId, value: option.value, text: option.text };
-      }
-      return { selected: false, error: 'Option not found' };
-    }, [elementId, value]);
+  async selectOption(tabId, ref, value) {
+    return this._executeContentScript(tabId, ContentAction.SELECT_OPTION, { ref, value });
   }
 
-  async checkCheckbox(tabId, elementId, checked) {
-    return this._executeScript(tabId, (elementId, shouldCheck) => {
-      const checkbox = /** @type {HTMLInputElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
-      if (!checkbox || checkbox.type !== 'checkbox') {
-        return { modified: false, error: 'Checkbox not found' };
-      }
-      if (checkbox.checked !== shouldCheck) {
-        checkbox.checked = shouldCheck;
-        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-        return { modified: true, checked: shouldCheck };
-      }
-      return { modified: false, checked: shouldCheck, note: 'Already in desired state' };
-    }, [elementId, checked]);
+  async checkCheckbox(tabId, ref, checked) {
+    return this._executeContentScript(tabId, ContentAction.CHECK_CHECKBOX, { ref, checked });
   }
 
-  async submitForm(tabId, elementId) {
-    return this._executeScript(tabId, (elementId) => {
-      const element = /** @type {HTMLElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
-      if (!element) {
-        return { submitted: false, error: 'Element not found' };
-      }
-      if (element.tagName === 'BUTTON' || element.tagName === 'INPUT') {
-        /** @type {HTMLButtonElement | HTMLInputElement} */ (element).click();
-        return { submitted: true, method: 'click' };
-      }
-      if (element.tagName === 'FORM') {
-        /** @type {HTMLFormElement} */ (element).submit();
-        return { submitted: true, method: 'submit' };
-      }
-      return { submitted: false, error: 'Element is not a form or submit button' };
-    }, [elementId]);
+  async submitForm(tabId, ref) {
+    return this._executeContentScript(tabId, ContentAction.SUBMIT_FORM, { ref });
   }
 
   async scrollAndWait(tabId, direction, pixels = 500, waitMs = 500) {
     return this._executeContentScript(tabId, ContentAction.SCROLL_AND_WAIT, { direction, pixels, waitMs });
   }
 
-  async navigateTo(tabId, url) {
+  async navigateTo(tabIdOrAlias, url) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     let validatedUrl;
     if (url.match(/^https?:\/\//)) {
       validatedUrl = url;
@@ -514,10 +544,14 @@ class ChromeAPI {
     return { navigated: true, new_url: validatedUrl };
   }
 
-  async switchTab(tabId) {
+  async switchTab(tabIdOrAlias) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     await chrome.tabs.update(tabId, { active: true });
     this._lastActivatedTabId = tabId;
-    return { switched: true, tabId };
+    const alias = this._getTabAlias(tabId);
+    return { switched: true, tabId: alias };
   }
 
   async openInNewTab(url, active = true) {
@@ -538,10 +572,14 @@ class ChromeAPI {
     }
     const tab = await chrome.tabs.create({ url: validatedUrl, active });
     this._ensureTab(tab.id, validatedUrl, tab.windowId);
-    return { created: true, tabId: tab.id, url: validatedUrl };
+    const alias = this._getTabAlias(tab.id);
+    return { created: true, tabId: alias, url: validatedUrl };
   }
 
-  async _navigate(tabId, direction) {
+  async _navigate(tabIdOrAlias, direction) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     const tabState = this.tabs.get(tabId);
 
     // Pre-check if navigation is possible
@@ -568,11 +606,11 @@ class ChromeAPI {
     return { navigated: true, direction, url: tab?.url, ...nav };
   }
 
-  async goBack(tabId) { return this._navigate(tabId, 'back'); }
-  async goForward(tabId) { return this._navigate(tabId, 'forward'); }
+  async goBack(tabIdOrAlias) { return this._navigate(tabIdOrAlias, 'back'); }
+  async goForward(tabIdOrAlias) { return this._navigate(tabIdOrAlias, 'forward'); }
 
-  async getPageState(tabId) {
-    return this._executeScript(tabId, () => ({
+  async getPageState(tabIdOrAlias) {
+    return this._executeScript(tabIdOrAlias, () => ({
       scroll_y: window.scrollY,
       scroll_x: window.scrollX,
       viewport_height: window.innerHeight,
@@ -585,8 +623,8 @@ class ChromeAPI {
 
   // --- New Actions ---
 
-  async hoverElement(tabId, elementId) {
-    return this._executeContentScript(tabId, ContentAction.HOVER_ELEMENT, { elementId });
+  async hoverElement(tabId, ref) {
+    return this._executeContentScript(tabId, ContentAction.HOVER_ELEMENT, { ref });
   }
 
   async pressKey(tabId, key, modifiers = {}) {
@@ -666,19 +704,28 @@ class ChromeAPI {
     });
   }
 
-  enableNetworkTracking(tabId) {
+  enableNetworkTracking(tabIdOrAlias) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     if (!this.networkRequests.has(tabId)) {
       this.networkRequests.set(tabId, []);
     }
-    return { enabled: true, tabId };
+    return { enabled: true, tabId: this._getTabAlias(tabId) };
   }
 
-  disableNetworkTracking(tabId) {
+  disableNetworkTracking(tabIdOrAlias) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     this.networkRequests.delete(tabId);
-    return { disabled: true, tabId };
+    return { disabled: true, tabId: this._getTabAlias(tabId) };
   }
 
-  getNetworkRequests(tabId, filter = {}) {
+  getNetworkRequests(tabIdOrAlias, filter = {}) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     const requests = this.networkRequests.get(tabId) || [];
     let filtered = requests;
 
@@ -716,9 +763,12 @@ class ChromeAPI {
     };
   }
 
-  clearNetworkRequests(tabId) {
+  clearNetworkRequests(tabIdOrAlias) {
+    const tabId = this.resolveTabId(tabIdOrAlias);
+    if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
     this.networkRequests.set(tabId, []);
-    return { cleared: true, tabId };
+    return { cleared: true, tabId: this._getTabAlias(tabId) };
   }
 }
 

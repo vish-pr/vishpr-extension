@@ -2,64 +2,16 @@
  * Browser automation actions
  * Uses chrome-api for browser operations, returns uniform { result } shape
  */
-import type { Action, Message, StepContext, StepResult, JSONSchema } from './types/index.js';
+import type { Action, Message, StepContext, StepResult } from './types/index.js';
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
 import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
-// Schema for LLM content cleaning output
-const CLEAN_OUTPUT_SCHEMA: JSONSchema = {
-  type: 'object',
-  properties: {
-    html: { type: 'string', description: 'Cleaned HTML preserving structure. Remove redundancy, keep meaning.' },
-    summary: { type: 'string', description: '3-line summary: purpose, main content, key actions' }
-  },
-  required: ['html', 'summary'],
-  additionalProperties: false
-};
-
-const CLEAN_SYSTEM_PROMPT = `You are an HTML cleaner for a browser automation agent. You remove noise while preserving structure and meaning.
-
-# Rules
-
-MUST preserve:
-- Semantic HTML (headings, lists, tables, articles, sections)
-- All text that conveys information
-- Interactive elements with data-vish-id (agent uses these IDs to click/fill)
-- State attributes (aria-*, data-state, checked, selected)
-
-MUST remove:
-- Exact duplicate text (same phrase appearing multiple times)
-- Boilerplate (cookie banners, "Accept all", copyright notices)
-- Empty elements with no content
-- Filler text ("Loading...", "Please wait", placeholders)
-
-NEVER:
-- Summarize content - output is cleaned HTML, not a summary
-- Remove elements with data-vish-id (agent needs these for interaction)
-- Change the document structure or hierarchy
-
-# Output
-
-| Field | Description |
-|-------|-------------|
-| html | Cleaned HTML. Full content, less noise. Links/buttons/inputs are inline with data-vish-id. |
-| summary | 3 lines: purpose, main content, key actions |
-
-# Examples
-
-Input: <div><p>Welcome</p><p>Welcome</p><p>Click here to continue</p></div>
-Output html: <div><p>Welcome</p><p>Click here to continue</p></div>
-Why: Removed exact duplicate "Welcome"
-
-Input: <div class="cookie">Accept cookies</div><article>Real content</article>
-Output html: <article>Real content</article>
-Why: Removed cookie banner boilerplate`;
 
 /**
  * Compress previous READ_PAGE results in messages
- * Replaces full content with summary for all previous READ_PAGE tool responses
+ * Replaces full content with compact version for all previous READ_PAGE tool responses
  */
 function compressPreviousReads(parent_messages: Message[] | undefined): Message[] | undefined {
   if (!parent_messages || !Array.isArray(parent_messages)) return parent_messages;
@@ -74,17 +26,18 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
       return msg;
     }
 
-    // Skip if not a READ_PAGE result or already compressed
-    if (!content.summary || content._compressed) return msg;
+    // Skip if not a READ_PAGE result (has content & refCount) or already compressed
+    if (!content.content || !content.refCount || content._compressed) return msg;
 
-    // Replace with compressed version
+    // Replace with compressed version - keep title and url, drop full content
     return {
       ...msg,
       content: JSON.stringify({
         tabId: content.tabId,
         url: content.url,
+        title: content.title,
         _compressed: true,
-        summary: content.summary
+        note: 'Previous page content omitted. Use READ_PAGE to get current content.'
       })
     };
   });
@@ -92,11 +45,11 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
 
 /**
  * READ_PAGE action
- * Extracts page content via cleanDOM in content script, then LLM cleans/summarizes
+ * Extracts page content as accessibility tree - no LLM processing needed
  */
 export const READ_PAGE: Action = {
   name: 'READ_PAGE',
-  description: 'Extract page content including title, text, links, buttons, and form inputs. Use when you need to see what is on the page or find elements to interact with. Returns element IDs that are required for CLICK_ELEMENT, FILL_FORM, and other interaction actions.',
+  description: 'Extract page content as accessibility tree with interactive element refs. Use when you need to see what is on the page or find elements to interact with. Returns refs like [e1], [e2] that are required for CLICK_ELEMENT, FILL_FORM, and other interaction actions.',
   examples: [
     'What is on this page?',
     'Show me the page content'
@@ -105,8 +58,8 @@ export const READ_PAGE: Action = {
     type: 'object',
     properties: {
       tabId: {
-        type: 'number',
-        description: 'Tab ID to extract content from'
+        type: 'string',
+        description: 'Tab ID to extract content from (e.g., "t1", "t2")'
       },
       justification: {
         type: 'string',
@@ -117,67 +70,28 @@ export const READ_PAGE: Action = {
     additionalProperties: true
   },
   steps: [
-    // Step 1: Extract content (cleanDOM runs in content script)
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const raw = await chrome.extractContent(ctx.tabId);
+        const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
 
-        // Log mode and stats
-        if (raw.contentMode === 'text') {
-          const debugInfo = raw.debugLog?.length
-            ? raw.debugLog.map((p: { phase: string; sizeAfter: number }) => `${p.phase}:${p.sizeAfter}`).join(', ')
-            : 'no-debug';
-          console.warn(`[READ_PAGE] text fallback | raw=${raw.rawHtmlSize} final=${raw.byteSize} | ${raw.url}\n  phases: ${debugInfo}`);
-        } else {
-          console.log(`[READ_PAGE] html mode | raw=${raw.rawHtmlSize} cleaned=${raw.byteSize} | ${raw.url}`);
+        if (!a11y.success) {
+          throw new Error(a11y.error || 'Failed to extract accessibility tree');
         }
 
-        // Track content mode usage
+        console.log(`[READ_PAGE] a11y mode | refCount=${a11y.refCount} | ${a11y.url}`);
+
+        // Track usage
         const stats = getActionStatsCounter();
-        stats.increment('READ_PAGE', raw.contentMode === 'html' ? 'html_mode' : 'text_fallback').catch(() => {});
-
-        return {
-          result: {
-            url: raw.url,
-            title: raw.title,
-            contentMode: raw.contentMode,
-            content: raw.content
-          }
-        };
-      }
-    },
-    // Step 2: LLM cleans HTML (removes redundancy, preserves structure)
-    {
-      type: 'llm',
-      system_prompt: CLEAN_SYSTEM_PROMPT,
-      message: `Clean this HTML. Remove redundancy, preserve structure and meaning.
-
-Title: {{{title}}}
-HTML: {{{content}}}
-
-Output cleaned HTML. Interactive elements have data-vish-id inline.`,
-      intelligence: 'MEDIUM',
-      output_schema: CLEAN_OUTPUT_SCHEMA
-    },
-    // Step 3: Format final result
-    {
-      type: 'function',
-      handler: (ctx: StepContext): StepResult => {
-        const chrome = getChromeAPI();
-
-        chrome.updateTabContent(ctx.tabId, {
-          raw: { title: ctx.title, html: ctx.html },
-          summary: ctx.summary
-        });
+        stats.increment('READ_PAGE', 'a11y_mode').catch(() => {});
 
         const result: Record<string, unknown> = {
           tabId: ctx.tabId,
-          url: ctx.url,
-          title: ctx.title,
-          summary: ctx.summary,
-          html: ctx.html
+          url: a11y.url,
+          title: a11y.title,
+          content: a11y.content,
+          refCount: a11y.refCount
         };
 
         const updatedParentMessages = compressPreviousReads(ctx.parent_messages);
@@ -192,7 +106,7 @@ Output cleaned HTML. Interactive elements have data-vish-id inline.`,
  */
 export const CLICK_ELEMENT: Action = {
   name: 'CLICK_ELEMENT',
-  description: 'Click a button, link, or interactive element using its element ID from READ_PAGE. Supports modifiers: newTab (open in background tab), newTabActive (open in foreground tab), download (download instead of navigate). Requires elementId from READ_PAGE results. When a click causes navigation, automatically extracts page content (disable with autoReadOnNavigate=false).',
+  description: 'Click a button, link, or interactive element using its ref from READ_PAGE. Supports modifiers: newTab (open in background tab), newTabActive (open in foreground tab), download (download instead of navigate). Requires ref from READ_PAGE results (e.g., "e1", "e34"). When a click causes navigation, automatically extracts page content as accessibility tree (disable with autoReadOnNavigate=false).',
   examples: [
     'Click the login button',
     'Open that link in a new tab'
@@ -200,15 +114,15 @@ export const CLICK_ELEMENT: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
-      elementId: { type: 'number', description: 'Element ID from READ_PAGE' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
+      ref: { type: 'string', description: 'Element ref from READ_PAGE (e.g., "e1", "e34")' },
       newTab: { type: 'boolean', description: 'Open link in new background tab' },
       newTabActive: { type: 'boolean', description: 'Open link in new foreground tab' },
       download: { type: 'boolean', description: 'Download the link instead of navigating' },
       autoReadOnNavigate: { type: 'boolean', description: 'Auto-extract page content if click causes navigation (default: true)' },
       justification: { type: 'string', description: 'Why clicking this element' }
     },
-    required: ['tabId', 'elementId'],
+    required: ['tabId', 'ref'],
     additionalProperties: true
   },
   steps: [
@@ -216,7 +130,7 @@ export const CLICK_ELEMENT: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const clickResult = await chrome.clickElement(ctx.tabId, ctx.elementId, {
+        const clickResult = await chrome.clickElement(ctx.tabId, ctx.ref, {
           newTab: ctx.newTab || false,
           newTabActive: ctx.newTabActive || false,
           download: ctx.download || false
@@ -225,15 +139,15 @@ export const CLICK_ELEMENT: Action = {
         // Auto-read if navigation detected and not disabled
         if (clickResult.navigated && ctx.autoReadOnNavigate !== false) {
           try {
-            const content = await chrome.extractContent(ctx.tabId);
+            const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
             return {
               result: {
                 ...clickResult,
                 page: {
-                  url: content.url,
-                  title: content.title,
-                  html: content.content,
-                  contentMode: content.contentMode
+                  url: a11y.url,
+                  title: a11y.title,
+                  content: a11y.content,
+                  refCount: a11y.refCount
                 }
               }
             };
@@ -262,7 +176,7 @@ export const SWITCH_TAB: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID to switch to' },
+      tabId: { type: 'string', description: 'Tab ID to switch to (e.g., "t1", "t2")' },
       justification: { type: 'string', description: 'Why switching tabs' }
     },
     required: ['tabId'],
@@ -285,7 +199,7 @@ export const SWITCH_TAB: Action = {
  */
 export const CHANGE_TAB_URL: Action = {
   name: 'CHANGE_TAB_URL',
-  description: 'Change the URL of an existing tab and automatically extract page content. Use when you want to navigate within the same tab. Returns page content directly (disable with autoRead=false).',
+  description: 'Change the URL of an existing tab and automatically extract page content as accessibility tree. Use when you want to navigate within the same tab. Returns page content directly (disable with autoRead=false).',
   examples: [
     'Go to https://google.com in this tab',
     'Navigate to https://github.com'
@@ -293,7 +207,7 @@ export const CHANGE_TAB_URL: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       url: { type: 'string', description: 'URL to navigate to' },
       autoRead: { type: 'boolean', description: 'Auto-extract page content after navigation (default: true)' },
       justification: { type: 'string', description: 'Why navigating to this URL' }
@@ -313,15 +227,15 @@ export const CHANGE_TAB_URL: Action = {
           return { result: navResult };
         }
 
-        // No explicit wait needed - extractContent waits internally for DOM stability
+        // Extract accessibility tree for better structure
         try {
-          const content = await chrome.extractContent(ctx.tabId);
+          const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
           return {
             result: {
               ...navResult,
-              title: content.title,
-              html: content.content,
-              contentMode: content.contentMode
+              title: a11y.title,
+              content: a11y.content,
+              refCount: a11y.refCount
             }
           };
         } catch (e) {
@@ -338,7 +252,7 @@ export const CHANGE_TAB_URL: Action = {
  */
 export const OPEN_URL_IN_NEW_TAB: Action = {
   name: 'OPEN_URL_IN_NEW_TAB',
-  description: 'Open a URL in a new browser tab and automatically extract page content. Returns page content directly (disable with autoRead=false).',
+  description: 'Open a URL in a new browser tab and automatically extract page content as accessibility tree. Returns page content directly (disable with autoRead=false).',
   examples: [
     'Open https://google.com in a new tab',
     'Open this link in new tab'
@@ -366,15 +280,15 @@ export const OPEN_URL_IN_NEW_TAB: Action = {
           return { result };
         }
 
-        // No explicit wait needed - extractContent waits internally for DOM stability
+        // Extract accessibility tree for better structure
         try {
-          const content = await chrome.extractContent(result.tabId);
+          const a11y = await chrome.extractAccessibilityTree(result.tabId);
           return {
             result: {
               ...result,
-              title: content.title,
-              html: content.content,
-              contentMode: content.contentMode
+              title: a11y.title,
+              content: a11y.content,
+              refCount: a11y.refCount
             }
           };
         } catch (e) {
@@ -399,7 +313,7 @@ export const GET_PAGE_STATE: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       justification: { type: 'string', description: 'Why getting page state' }
     },
     required: ['tabId'],
@@ -422,7 +336,7 @@ export const GET_PAGE_STATE: Action = {
  */
 export const FILL_FORM: Action = {
   name: 'FILL_FORM',
-  description: 'Fill one or more form input fields with values. Requires form_fields array with [{elementId, value}] where elementId comes from READ_PAGE.',
+  description: 'Fill one or more form input fields with values. Requires form_fields array with [{ref, value}] where ref comes from READ_PAGE (e.g., "e1", "e34").',
   examples: [
     'Enter my email address',
     'Fill in the search box with "test"'
@@ -430,21 +344,21 @@ export const FILL_FORM: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       form_fields: {
         type: 'array',
         description: 'Array of form fields to fill',
         items: {
           type: 'object',
           properties: {
-            elementId: { type: 'number', description: 'Element ID from READ_PAGE' },
+            ref: { type: 'string', description: 'Element ref from READ_PAGE (e.g., "e1", "e34")' },
             value: { type: 'string', description: 'Value to set' }
           },
           additionalProperties: false
         }
       },
       submit: { type: 'boolean', description: 'Whether to submit the form after filling' },
-      submit_element_id: { type: 'number', description: 'Element ID for submit button' },
+      submit_ref: { type: 'string', description: 'Element ref for submit button (e.g., "e5")' },
       justification: { type: 'string', description: 'Why filling this form' }
     },
     required: ['tabId', 'form_fields'],
@@ -459,7 +373,7 @@ export const FILL_FORM: Action = {
           ctx.tabId,
           ctx.form_fields,
           ctx.submit || false,
-          ctx.submit_element_id
+          ctx.submit_ref
         );
         return { result: fillResult };
       }
@@ -472,7 +386,7 @@ export const FILL_FORM: Action = {
  */
 export const SELECT_OPTION: Action = {
   name: 'SELECT_OPTION',
-  description: 'Select an option from a dropdown/select element. Requires elementId of the select element and the value or text to select.',
+  description: 'Select an option from a dropdown/select element. Requires ref of the select element and the value or text to select.',
   examples: [
     'Select "United States" from the country dropdown',
     'Choose the medium size option'
@@ -480,12 +394,12 @@ export const SELECT_OPTION: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
-      elementId: { type: 'number', description: 'Element ID from READ_PAGE for the select element' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
+      ref: { type: 'string', description: 'Element ref from READ_PAGE for the select element (e.g., "e1")' },
       value: { type: 'string', description: 'Value or text of the option to select' },
       justification: { type: 'string', description: 'Why selecting this option' }
     },
-    required: ['tabId', 'elementId', 'value'],
+    required: ['tabId', 'ref', 'value'],
     additionalProperties: true
   },
   steps: [
@@ -493,7 +407,7 @@ export const SELECT_OPTION: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const selectResult = await chrome.selectOption(ctx.tabId, ctx.elementId, ctx.value);
+        const selectResult = await chrome.selectOption(ctx.tabId, ctx.ref, ctx.value);
         return { result: selectResult };
       }
     }
@@ -505,7 +419,7 @@ export const SELECT_OPTION: Action = {
  */
 export const CHECK_CHECKBOX: Action = {
   name: 'CHECK_CHECKBOX',
-  description: 'Check or uncheck a checkbox input. Requires elementId from READ_PAGE and checked (true to check, false to uncheck).',
+  description: 'Check or uncheck a checkbox input. Requires ref from READ_PAGE and checked (true to check, false to uncheck).',
   examples: [
     'Check the terms and conditions box',
     'Uncheck the newsletter subscription'
@@ -513,12 +427,12 @@ export const CHECK_CHECKBOX: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
-      elementId: { type: 'number', description: 'Element ID from READ_PAGE for the checkbox' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
+      ref: { type: 'string', description: 'Element ref from READ_PAGE for the checkbox (e.g., "e1")' },
       checked: { type: 'boolean', description: 'Whether to check (true) or uncheck (false)' },
       justification: { type: 'string', description: 'Why modifying this checkbox' }
     },
-    required: ['tabId', 'elementId', 'checked'],
+    required: ['tabId', 'ref', 'checked'],
     additionalProperties: true
   },
   steps: [
@@ -526,7 +440,7 @@ export const CHECK_CHECKBOX: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const checkResult = await chrome.checkCheckbox(ctx.tabId, ctx.elementId, ctx.checked);
+        const checkResult = await chrome.checkCheckbox(ctx.tabId, ctx.ref, ctx.checked);
         return { result: checkResult };
       }
     }
@@ -538,7 +452,7 @@ export const CHECK_CHECKBOX: Action = {
  */
 export const SUBMIT_FORM: Action = {
   name: 'SUBMIT_FORM',
-  description: 'Submit a form by clicking a submit button or triggering form submission. When submission causes navigation, automatically extracts page content (disable with autoReadOnNavigate=false).',
+  description: 'Submit a form by clicking a submit button or triggering form submission. When submission causes navigation, automatically extracts page content as accessibility tree (disable with autoReadOnNavigate=false).',
   examples: [
     'Submit the form',
     'Press the submit button'
@@ -546,12 +460,12 @@ export const SUBMIT_FORM: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
-      elementId: { type: 'number', description: 'Element ID for submit button or form element' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
+      ref: { type: 'string', description: 'Element ref for submit button or form element (e.g., "e1")' },
       autoReadOnNavigate: { type: 'boolean', description: 'Auto-extract page content if submission causes navigation (default: true)' },
       justification: { type: 'string', description: 'Why submitting this form' }
     },
-    required: ['tabId', 'elementId'],
+    required: ['tabId', 'ref'],
     additionalProperties: true
   },
   steps: [
@@ -561,15 +475,15 @@ export const SUBMIT_FORM: Action = {
         const chrome = getChromeAPI();
 
         // Get URL before submission to detect navigation
-        const urlBefore = (await chrome.extractContent(ctx.tabId)).url;
-        const submitResult = await chrome.submitForm(ctx.tabId, ctx.elementId);
+        const urlBefore = (await chrome.extractAccessibilityTree(ctx.tabId)).url;
+        const submitResult = await chrome.submitForm(ctx.tabId, ctx.ref);
 
         // Check if navigation occurred by comparing URLs
         await new Promise(r => setTimeout(r, 500)); // Wait for potential navigation
 
         let navigated = false;
         try {
-          const urlAfter = (await chrome.extractContent(ctx.tabId)).url;
+          const urlAfter = (await chrome.extractAccessibilityTree(ctx.tabId)).url;
           navigated = urlAfter !== urlBefore;
         } catch {
           // Tab may be navigating
@@ -579,17 +493,16 @@ export const SUBMIT_FORM: Action = {
         // Auto-read if navigation detected and not disabled
         if (navigated && ctx.autoReadOnNavigate !== false) {
           try {
-            // No explicit wait needed - extractContent waits internally for DOM stability
-            const content = await chrome.extractContent(ctx.tabId);
+            const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
             return {
               result: {
                 ...submitResult,
                 navigated: true,
                 page: {
-                  url: content.url,
-                  title: content.title,
-                  html: content.content,
-                  contentMode: content.contentMode
+                  url: a11y.url,
+                  title: a11y.title,
+                  content: a11y.content,
+                  refCount: a11y.refCount
                 }
               }
             };
@@ -618,7 +531,7 @@ export const SCROLL_TO: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       direction: { type: 'string', description: 'Scroll direction', enum: ['up', 'down', 'top', 'bottom'] },
       pixels: { type: 'number', description: 'Number of pixels to scroll. Default: 500' },
       wait_ms: { type: 'number', description: 'Milliseconds to wait after scrolling. Default: 500' },
@@ -649,7 +562,7 @@ export const SCROLL_TO: Action = {
  */
 export const NAVIGATE_HISTORY: Action = {
   name: 'NAVIGATE_HISTORY',
-  description: 'Navigate back or forward in browser history. Response includes canGoBack and canGoForward. Automatically extracts page content (disable with autoRead=false).',
+  description: 'Navigate back or forward in browser history. Response includes canGoBack and canGoForward. Automatically extracts page content as accessibility tree (disable with autoRead=false).',
   examples: [
     'Go back',
     'Go forward',
@@ -658,7 +571,7 @@ export const NAVIGATE_HISTORY: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       direction: { type: 'string', enum: ['back', 'forward'], description: 'Navigation direction' },
       autoRead: { type: 'boolean', description: 'Auto-extract page content after navigation (default: true)' },
       justification: { type: 'string', description: 'Why navigating' }
@@ -680,15 +593,15 @@ export const NAVIGATE_HISTORY: Action = {
           return { result: navResult };
         }
 
-        // No explicit wait needed - extractContent waits internally for DOM stability
+        // Extract accessibility tree for better structure
         try {
-          const content = await chrome.extractContent(ctx.tabId);
+          const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
           return {
             result: {
               ...navResult,
-              title: content.title,
-              html: content.content,
-              contentMode: content.contentMode
+              title: a11y.title,
+              content: a11y.content,
+              refCount: a11y.refCount
             }
           };
         } catch (e) {
@@ -705,7 +618,7 @@ export const NAVIGATE_HISTORY: Action = {
  */
 export const HOVER_ELEMENT: Action = {
   name: 'HOVER_ELEMENT',
-  description: 'Hover over an element to trigger hover effects like dropdowns, tooltips, or menus. Requires elementId from READ_PAGE.',
+  description: 'Hover over an element to trigger hover effects like dropdowns, tooltips, or menus. Requires ref from READ_PAGE.',
   examples: [
     'Hover over the dropdown menu',
     'Show the tooltip by hovering'
@@ -713,11 +626,11 @@ export const HOVER_ELEMENT: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
-      elementId: { type: 'number', description: 'Element ID from READ_PAGE' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
+      ref: { type: 'string', description: 'Element ref from READ_PAGE (e.g., "e1")' },
       justification: { type: 'string', description: 'Why hovering over this element' }
     },
-    required: ['tabId', 'elementId'],
+    required: ['tabId', 'ref'],
     additionalProperties: true
   },
   steps: [
@@ -725,7 +638,7 @@ export const HOVER_ELEMENT: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const result = await chrome.hoverElement(ctx.tabId, ctx.elementId);
+        const result = await chrome.hoverElement(ctx.tabId, ctx.ref);
         return { result };
       }
     }
@@ -746,7 +659,7 @@ export const PRESS_KEY: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       key: { type: 'string', description: 'Key to press (Enter, Tab, Escape, ArrowUp, ArrowDown, a-z, etc.)' },
       ctrlKey: { type: 'boolean', description: 'Hold Ctrl key' },
       metaKey: { type: 'boolean', description: 'Hold Meta/Cmd key' },
@@ -788,7 +701,7 @@ export const HANDLE_DIALOG: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       accept: { type: 'boolean', description: 'Whether to accept (true) or dismiss (false) the dialog' },
       promptText: { type: 'string', description: 'Text to enter if the dialog is a prompt' },
       justification: { type: 'string', description: 'Why handling dialog this way' }
@@ -821,7 +734,7 @@ export const GET_DIALOGS: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       justification: { type: 'string', description: 'Why getting dialog history' }
     },
     required: ['tabId'],
@@ -852,7 +765,7 @@ export const GET_NETWORK_REQUESTS: Action = {
   input_schema: {
     type: 'object',
     properties: {
-      tabId: { type: 'number', description: 'Tab ID' },
+      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
       type: { type: 'string', description: 'Filter by request type: xmlhttprequest, fetch, script, stylesheet, image, etc.' },
       urlPattern: { type: 'string', description: 'Filter by URL regex pattern' },
       status: { type: 'string', description: 'Filter by status: pending, completed, error' },
@@ -940,12 +853,22 @@ CORE PRINCIPLES
 ────────────────────────────────────────
 AUTO-READ BEHAVIOR (IMPORTANT)
 ────────────────────────────────────────
-Navigation actions automatically extract and return page content:
-• CHANGE_TAB_URL → returns page content after navigation
-• OPEN_URL_IN_NEW_TAB → returns page content after opening
-• CLICK_ELEMENT → returns page content if click causes navigation
-• SUBMIT_FORM → returns page content if submission causes navigation
-• GO_BACK / GO_FORWARD → returns page content after navigation
+Navigation actions automatically extract and return page content as accessibility tree:
+• CHANGE_TAB_URL → returns accessibility tree after navigation
+• OPEN_URL_IN_NEW_TAB → returns accessibility tree after opening
+• CLICK_ELEMENT → returns accessibility tree if click causes navigation
+• SUBMIT_FORM → returns accessibility tree if submission causes navigation
+• GO_BACK / GO_FORWARD → returns accessibility tree after navigation
+
+The accessibility tree format shows:
+• Interactive elements with refs like [e1], [e2] for clicking
+• Semantic roles: button, link, textbox, checkbox, list, listitem, etc.
+• Element names/labels in quotes
+• States: (checked), (disabled), (expanded), (collapsed)
+
+Example: [e34] button "Compose"
+         [e36] link "Inbox 2452 unread"
+         [e106] row "GitHub, [GitHub] Please verify your device, 1:07 PM"
 
 You do NOT need READ_PAGE after these actions - content is already in the result.
 Only use READ_PAGE when you need fresh element IDs after UI changes without navigation.
@@ -964,9 +887,9 @@ Examples:
 ────────────────────────────────────────
 ELEMENT INTERACTION RULE
 ────────────────────────────────────────
-MUST have element IDs before interaction (click, fill, select, check, submit, hover).
-Element IDs come from: READ_PAGE result OR auto-read content from navigation actions.
-NEVER guess or invent element IDs.
+MUST have element refs before interaction (click, fill, select, check, submit, hover).
+Element refs come from: READ_PAGE result OR auto-read content from navigation actions.
+Refs are strings like "e1", "e34" - NEVER guess or invent refs.
 
 ────────────────────────────────────────
 TOOLS
@@ -979,7 +902,7 @@ WORKFLOW RULES
 ────────────────────────────────────────
 MUST:
 • Navigate first if no page context exists
-• Have element IDs before any element interaction
+• Have element refs before any element interaction
 • Use FINAL_RESPONSE when task is complete or blocked
 
 SHOULD:
@@ -987,14 +910,14 @@ SHOULD:
 • Use PRESS_KEY for keyboard shortcuts (Enter to submit, Escape to close)
 
 NEVER:
-• Click or fill without element IDs
-• Invent element IDs, URLs, or tabs
+• Click or fill without element refs
+• Invent refs, URLs, or tabs
 • Loop more than 2 times on the same failed action
 
 ────────────────────────────────────────
 ERROR HANDLING
 ────────────────────────────────────────
-• If element not found → READ_PAGE to get fresh IDs
+• If element not found → READ_PAGE to get fresh refs
 • If same error occurs twice → FINAL_RESPONSE with error
 • If interaction fails → try an alternative valid approach
 
@@ -1027,7 +950,7 @@ Use FINAL_RESPONSE to terminate.`,
 
 Goal: {{{goal}}}
 
-If no element IDs available, READ_PAGE first. Use {{{stop_action}}} when done or after 2 failed attempts.`,
+If no element refs available, READ_PAGE first. Use {{{stop_action}}} when done or after 2 failed attempts.`,
       continuation_message: `Previous action completed. Review the result above.
 
 <current_browser_tabs>
