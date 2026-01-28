@@ -6,7 +6,7 @@ import { renderModelStats, renderActionStats, setupStatsTimeFilter, getStatsTime
 import { getModelStatsCounter, getActionStatsCounter } from './time-bucket-counter.js';
 import { getChatStatus } from '../chat.js';
 import { getTraces, getTraceById, deleteTrace } from './trace-collector.js';
-import { getBrowserStateBundle } from '../chrome-api.js';
+import { getBrowserStateBundle } from '../content-bridge.js';
 
 // SVG icons for consistent rendering
 const ICONS = {

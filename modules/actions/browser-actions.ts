@@ -1,12 +1,97 @@
 /**
  * Browser automation actions
- * Uses chrome-api for browser operations, returns uniform { result } shape
+ * Uses content-bridge for DOM operations, direct Chrome APIs for navigation
  */
 import type { Action, Message, StepContext, StepResult } from './types/index.js';
-import { getChromeAPI } from '../chrome-api.js';
+import {
+  tabManager,
+  extractA11yTree,
+  clickElement,
+  fillForm,
+  selectOption,
+  checkCheckbox,
+  submitForm,
+  scrollAndWait,
+  hoverElement,
+  pressKey,
+  handleDialog,
+  getDialogs,
+  getPageState,
+  setLastActivatedTab
+} from '../content-bridge.js';
 import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
 import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
+
+// --- Navigation Helpers ---
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+function validateUrl(url: string, baseUrl?: string): string {
+  if (/^https?:\/\//.test(url)) return url;
+  if (url.startsWith('/') && baseUrl) {
+    const base = new URL(baseUrl);
+    return base.origin + url;
+  }
+  return 'https://' + url;
+}
+
+async function navigateTo(tabIdOrAlias: string, url: string) {
+  const tabId = tabManager.resolveAlias(tabIdOrAlias);
+  if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
+  const currentTab = await chrome.tabs.get(tabId);
+  const validatedUrl = validateUrl(url, currentTab.url);
+  await chrome.tabs.update(tabId, { url: validatedUrl });
+  await sleep(500);
+  tabManager.ensureTab(tabId, validatedUrl);
+  return { navigated: true, new_url: validatedUrl };
+}
+
+async function switchTab(tabIdOrAlias: string) {
+  const tabId = tabManager.resolveAlias(tabIdOrAlias);
+  if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
+  await chrome.tabs.update(tabId, { active: true });
+  setLastActivatedTab(tabId);
+  return { switched: true, tabId: tabManager.getAlias(tabId) };
+}
+
+async function openInNewTab(url: string, active = true) {
+  let baseUrl: string | undefined;
+  if (url.startsWith('/')) {
+    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    baseUrl = currentTab?.url;
+  }
+  const validatedUrl = validateUrl(url, baseUrl);
+  const tab = await chrome.tabs.create({ url: validatedUrl, active });
+  tabManager.ensureTab(tab.id!, validatedUrl, tab.windowId);
+  if (active) setLastActivatedTab(tab.id!);
+  return { created: true, tabId: tabManager.getAlias(tab.id!), url: validatedUrl };
+}
+
+async function navigateHistory(tabIdOrAlias: string, direction: 'back' | 'forward') {
+  const tabId = tabManager.resolveAlias(tabIdOrAlias);
+  if (!tabId) throw new Error(`Invalid tab: ${tabIdOrAlias}`);
+
+  const tabState = tabManager.getTab(tabId);
+  if (tabState) {
+    if (direction === 'back' && tabState.historyIndex <= 0) {
+      return { navigated: false, direction, error: 'Cannot go back - at beginning of history', ...tabManager.getNavigationStatus(tabId) };
+    }
+    if (direction === 'forward' && tabState.historyIndex >= tabState.history.length - 1) {
+      return { navigated: false, direction, error: 'Cannot go forward - at end of history', ...tabManager.getNavigationStatus(tabId) };
+    }
+  }
+
+  tabManager.setPendingNavigation(tabId, direction);
+  await (direction === 'back' ? chrome.tabs.goBack(tabId) : chrome.tabs.goForward(tabId));
+  await sleep(500);
+  const tab = await chrome.tabs.get(tabId);
+  if (tab?.url) tabManager.ensureTab(tabId, tab.url);
+
+  return { navigated: true, direction, url: tab?.url, ...tabManager.getNavigationStatus(tabId) };
+}
 
 
 /**
@@ -73,8 +158,7 @@ export const READ_PAGE: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
+        const a11y = await extractA11yTree(ctx.tabId);
 
         if (!a11y.success) {
           throw new Error(a11y.error || 'Failed to extract accessibility tree');
@@ -129,8 +213,7 @@ export const CLICK_ELEMENT: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const clickResult = await chrome.clickElement(ctx.tabId, ctx.ref, {
+        const clickResult = await clickElement(ctx.tabId, ctx.ref, {
           newTab: ctx.newTab || false,
           newTabActive: ctx.newTabActive || false,
           download: ctx.download || false
@@ -139,7 +222,7 @@ export const CLICK_ELEMENT: Action = {
         // Auto-read if navigation detected and not disabled
         if (clickResult.navigated && ctx.autoReadOnNavigate !== false) {
           try {
-            const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
+            const a11y = await extractA11yTree(ctx.tabId);
             return {
               result: {
                 ...clickResult,
@@ -186,8 +269,7 @@ export const SWITCH_TAB: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = await chrome.switchTab(ctx.tabId);
+        const result = await switchTab(ctx.tabId);
         return { result };
       }
     }
@@ -219,8 +301,7 @@ export const CHANGE_TAB_URL: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const navResult = await chrome.navigateTo(ctx.tabId, ctx.url);
+        const navResult = await navigateTo(ctx.tabId, ctx.url);
 
         // Skip auto-read if explicitly disabled
         if (ctx.autoRead === false) {
@@ -229,7 +310,7 @@ export const CHANGE_TAB_URL: Action = {
 
         // Extract accessibility tree for better structure
         try {
-          const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
+          const a11y = await extractA11yTree(ctx.tabId);
           return {
             result: {
               ...navResult,
@@ -272,8 +353,7 @@ export const OPEN_URL_IN_NEW_TAB: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = await chrome.openInNewTab(ctx.url, ctx.active ?? true);
+        const result = await openInNewTab(ctx.url, ctx.active ?? true);
 
         // Skip auto-read if explicitly disabled
         if (ctx.autoRead === false) {
@@ -282,7 +362,7 @@ export const OPEN_URL_IN_NEW_TAB: Action = {
 
         // Extract accessibility tree for better structure
         try {
-          const a11y = await chrome.extractAccessibilityTree(result.tabId);
+          const a11y = await extractA11yTree(result.tabId);
           return {
             result: {
               ...result,
@@ -323,8 +403,7 @@ export const GET_PAGE_STATE: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const stateResult = await chrome.getPageState(ctx.tabId);
+        const stateResult = await getPageState(ctx.tabId);
         return { result: stateResult };
       }
     }
@@ -368,8 +447,7 @@ export const FILL_FORM: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const fillResult = await chrome.fillForm(
+        const fillResult = await fillForm(
           ctx.tabId,
           ctx.form_fields,
           ctx.submit || false,
@@ -406,8 +484,7 @@ export const SELECT_OPTION: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const selectResult = await chrome.selectOption(ctx.tabId, ctx.ref, ctx.value);
+        const selectResult = await selectOption(ctx.tabId, ctx.ref, ctx.value);
         return { result: selectResult };
       }
     }
@@ -439,8 +516,7 @@ export const CHECK_CHECKBOX: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const checkResult = await chrome.checkCheckbox(ctx.tabId, ctx.ref, ctx.checked);
+        const checkResult = await checkCheckbox(ctx.tabId, ctx.ref, ctx.checked);
         return { result: checkResult };
       }
     }
@@ -472,18 +548,16 @@ export const SUBMIT_FORM: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-
         // Get URL before submission to detect navigation
-        const urlBefore = (await chrome.extractAccessibilityTree(ctx.tabId)).url;
-        const submitResult = await chrome.submitForm(ctx.tabId, ctx.ref);
+        const urlBefore = (await extractA11yTree(ctx.tabId)).url;
+        const submitResult = await submitForm(ctx.tabId, ctx.ref);
 
         // Check if navigation occurred by comparing URLs
         await new Promise(r => setTimeout(r, 500)); // Wait for potential navigation
 
         let navigated = false;
         try {
-          const urlAfter = (await chrome.extractAccessibilityTree(ctx.tabId)).url;
+          const urlAfter = (await extractA11yTree(ctx.tabId)).url;
           navigated = urlAfter !== urlBefore;
         } catch {
           // Tab may be navigating
@@ -493,7 +567,7 @@ export const SUBMIT_FORM: Action = {
         // Auto-read if navigation detected and not disabled
         if (navigated && ctx.autoReadOnNavigate !== false) {
           try {
-            const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
+            const a11y = await extractA11yTree(ctx.tabId);
             return {
               result: {
                 ...submitResult,
@@ -544,8 +618,7 @@ export const SCROLL_TO: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const scrollResult = await chrome.scrollAndWait(
+        const scrollResult = await scrollAndWait(
           ctx.tabId,
           ctx.direction,
           ctx.pixels || 500,
@@ -583,10 +656,7 @@ export const NAVIGATE_HISTORY: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const navResult = ctx.direction === 'back'
-          ? await chrome.goBack(ctx.tabId)
-          : await chrome.goForward(ctx.tabId);
+        const navResult = await navigateHistory(ctx.tabId, ctx.direction);
 
         // Skip auto-read if explicitly disabled or navigation failed
         if (ctx.autoRead === false || !navResult.navigated) {
@@ -595,7 +665,7 @@ export const NAVIGATE_HISTORY: Action = {
 
         // Extract accessibility tree for better structure
         try {
-          const a11y = await chrome.extractAccessibilityTree(ctx.tabId);
+          const a11y = await extractA11yTree(ctx.tabId);
           return {
             result: {
               ...navResult,
@@ -637,8 +707,7 @@ export const HOVER_ELEMENT: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = await chrome.hoverElement(ctx.tabId, ctx.ref);
+        const result = await hoverElement(ctx.tabId, ctx.ref);
         return { result };
       }
     }
@@ -674,8 +743,7 @@ export const PRESS_KEY: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = await chrome.pressKey(ctx.tabId, ctx.key, {
+        const result = await pressKey(ctx.tabId, ctx.key, {
           ctrlKey: ctx.ctrlKey || false,
           metaKey: ctx.metaKey || false,
           shiftKey: ctx.shiftKey || false,
@@ -713,8 +781,7 @@ export const HANDLE_DIALOG: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = await chrome.handleDialog(ctx.tabId, ctx.accept, ctx.promptText);
+        const result = await handleDialog(ctx.tabId, ctx.accept, ctx.promptText);
         return { result };
       }
     }
@@ -744,46 +811,7 @@ export const GET_DIALOGS: Action = {
     {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = await chrome.getDialogs(ctx.tabId);
-        return { result };
-      }
-    }
-  ]
-};
-
-/**
- * GET_NETWORK_REQUESTS action
- */
-export const GET_NETWORK_REQUESTS: Action = {
-  name: 'GET_NETWORK_REQUESTS',
-  description: 'Get network requests made by the page. Useful for debugging, monitoring API calls, or checking resource loading.',
-  examples: [
-    'Show me the API requests',
-    'What network requests were made?'
-  ],
-  input_schema: {
-    type: 'object',
-    properties: {
-      tabId: { type: 'string', description: 'Tab ID (e.g., "t1", "t2")' },
-      type: { type: 'string', description: 'Filter by request type: xmlhttprequest, fetch, script, stylesheet, image, etc.' },
-      urlPattern: { type: 'string', description: 'Filter by URL regex pattern' },
-      status: { type: 'string', description: 'Filter by status: pending, completed, error' },
-      justification: { type: 'string', description: 'Why getting network requests' }
-    },
-    required: ['tabId'],
-    additionalProperties: true
-  },
-  steps: [
-    {
-      type: 'function',
-      handler: async (ctx: StepContext): Promise<StepResult> => {
-        const chrome = getChromeAPI();
-        const result = chrome.getNetworkRequests(ctx.tabId, {
-          type: ctx.type,
-          urlPattern: ctx.urlPattern,
-          status: ctx.status
-        });
+        const result = await getDialogs(ctx.tabId);
         return { result };
       }
     }
@@ -809,8 +837,7 @@ export const browserActions: Action[] = [
   HOVER_ELEMENT,
   PRESS_KEY,
   HANDLE_DIALOG,
-  GET_DIALOGS,
-  GET_NETWORK_REQUESTS
+  GET_DIALOGS
 ];
 
 /**
@@ -934,7 +961,6 @@ INTENT MAPPING
 "Press Enter" → PRESS_KEY
 "Hover menu" → HOVER_ELEMENT → READ_PAGE (to see dropdown)
 "Accept dialog" → HANDLE_DIALOG
-"Check API calls" → GET_NETWORK_REQUESTS
 
 ────────────────────────────────────────
 REMINDER
@@ -983,7 +1009,6 @@ Decision:
           PRESS_KEY.name,
           HANDLE_DIALOG.name,
           GET_DIALOGS.name,
-          GET_NETWORK_REQUESTS.name,
           FINAL_RESPONSE_ACTION.name
         ],
         stop_action: FINAL_RESPONSE_ACTION.name,

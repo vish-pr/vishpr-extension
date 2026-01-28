@@ -3,7 +3,7 @@
  * Fetches context variables fresh at render time - no caching
  */
 import Mustache from 'mustache';
-import { getBrowserStateBundle } from '../chrome-api.js';
+import { getBrowserStateBundle } from '../content-bridge.js';
 
 const PREFERENCES_KB_KEY = 'user_preferences_kb';
 
