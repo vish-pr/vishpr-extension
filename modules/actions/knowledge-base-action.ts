@@ -6,8 +6,302 @@
  * - ANSWERER: Answer questions using existing knowledge base
  * - CHECKER: Rate answer correctness (0-10)
  * - ADAPTAR: Incorporate new knowledge if answers were poor
+ *
+ * Facts are stored as JSON: [{text, score, lastModified}, ...]
+ * Scores are integers, LLM handles semantic matching + merging
+ * Pruning: timestamp-based, max 20 facts, delete oldest when full
  */
 import type { Action, JSONSchema, StepContext, StepResult } from './types/index.js';
+
+// =============================================================================
+// Types and Constants
+// =============================================================================
+
+export interface Fact {
+  text: string;
+  score: number;        // Integer only
+  lastModified: number; // Unix timestamp (ms)
+}
+
+const MAX_FACTS = 20;
+
+// =============================================================================
+// Knowledge Base Utilities
+// =============================================================================
+
+/**
+ * Parse KB JSON string into facts array
+ */
+export function parseKnowledgeBase(kb: string): Fact[] {
+  if (!kb?.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(kb);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((f): f is Fact =>
+      typeof f === 'object' && f !== null &&
+      typeof f.text === 'string' &&
+      typeof f.score === 'number' &&
+      typeof f.lastModified === 'number'
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parse prose with [N] counts into facts (used internally for ADAPTAR output)
+ */
+function parseProseWithCounts(prose: string): Fact[] {
+  const COUNT_REGEX = /\s*\[(\d+(?:\.\d+)?)\]\s*$/;
+  // Split on pattern: "] " or "]." followed by space (end of count marker)
+  const parts = prose.split(/\](?:\s*\.\s*|\s+)/).filter(s => s.trim());
+  const now = Date.now();
+
+  return parts
+    .map(p => {
+      const withBracket = p.trim() + ']';
+      const match = withBracket.match(COUNT_REGEX);
+      if (!match) return null;
+      return {
+        text: withBracket.replace(COUNT_REGEX, '').trim(),
+        score: Math.round(parseFloat(match[1])),
+        lastModified: now
+      };
+    })
+    .filter((f): f is Fact => f !== null);
+}
+
+/**
+ * Format facts array to JSON string for storage
+ */
+export function formatKnowledgeBase(facts: Fact[]): string {
+  return JSON.stringify(facts);
+}
+
+/**
+ * Convert facts to prose for LLM consumption
+ */
+export function factsToProse(facts: Fact[]): string {
+  if (facts.length === 0) return '';
+  return facts.map(f => f.text).join('. ') + '.';
+}
+
+/**
+ * Prune oldest facts if over limit
+ */
+export function pruneOldestFacts(facts: Fact[], maxFacts = MAX_FACTS): Fact[] {
+  if (facts.length <= maxFacts) return facts;
+  // Sort by lastModified descending, keep newest
+  return [...facts]
+    .sort((a, b) => b.lastModified - a.lastModified)
+    .slice(0, maxFacts);
+}
+
+/**
+ * Increment scores for matching fact texts (used for clarification boosts)
+ * Matches by exact text comparison (case-insensitive)
+ */
+export function incrementCounts(facts: Fact[], matchedTexts: string[], amount = 1): void {
+  const now = Date.now();
+  matchedTexts.forEach(text => {
+    const normalizedSearch = text.toLowerCase().trim();
+    const fact = facts.find(f => f.text.toLowerCase().trim() === normalizedSearch);
+    if (fact) {
+      fact.score += amount;
+      fact.lastModified = now;
+    }
+  });
+}
+
+/**
+ * Apply time decay to all facts (for backwards compat during migration)
+ * Note: New system uses timestamp-based pruning, not score decay
+ */
+export function applyDecay(facts: Fact[], factor = 0.95): Fact[] {
+  return facts.map(f => ({
+    ...f,
+    score: Math.max(1, Math.round(f.score * factor))
+  }));
+}
+
+// =============================================================================
+// FACT_COUNT_UPDATER Action
+// =============================================================================
+
+const FACT_COUNT_UPDATER_OUTPUT_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    facts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          score: { type: 'number', description: 'Integer score' },
+          modified: { type: 'boolean', description: 'True if score changed or fact was merged' }
+        },
+        required: ['text', 'score', 'modified']
+      }
+    }
+  },
+  required: ['facts']
+};
+
+/**
+ * FACT_COUNT_UPDATER - LLM-based semantic score updates
+ *
+ * Handles:
+ * - Semantic matching of "facts to boost" against existing facts
+ * - Merging similar facts
+ * - Returning integer scores with modified flags
+ *
+ * Post-processing (in code):
+ * - For modified=true facts → set lastModified = Date.now()
+ * - If facts.length > 20 → delete oldest by lastModified
+ */
+export const FACT_COUNT_UPDATER_ACTION: Action = {
+  name: 'FACT_COUNT_UPDATER',
+  description: 'Updates fact scores using semantic matching. Merges similar facts.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      existing_facts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            score: { type: 'number' }
+          }
+        },
+        description: 'Current facts with scores'
+      },
+      facts_to_boost: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+            amount: { type: 'number' }
+          }
+        },
+        description: 'Facts to boost with amounts'
+      }
+    },
+    required: ['existing_facts', 'facts_to_boost']
+  },
+  steps: [
+    // Prepare JSON for LLM
+    {
+      type: 'function',
+      handler: (ctx: StepContext): StepResult => {
+        const existingFacts = (ctx.existing_facts || []) as Array<{ text: string; score: number }>;
+        const factsToBoost = (ctx.facts_to_boost || []) as Array<{ text: string; amount: number }>;
+        return {
+          result: {
+            existing_facts_json: JSON.stringify(existingFacts, null, 2),
+            facts_to_boost_json: JSON.stringify(factsToBoost, null, 2)
+          }
+        };
+      }
+    },
+    {
+      type: 'llm',
+      system_prompt: `You update fact relevance scores using semantic matching.
+
+# Task
+1. Match each "fact to boost" against existing facts (semantic similarity)
+2. Add the boost amount to matched facts
+3. Merge semantically equivalent facts: combine text, average scores (round to int)
+4. Mark modified=true for any fact whose score changed or was merged
+
+# Matching Rules
+- "User likes coffee" matches "User prefers coffee" (same concept)
+- "User prefers dark mode" matches "User likes dark theme" (same preference)
+- "User uses Firefox" does NOT match "User likes fast browsers" (different)
+
+# Merging Rules
+When facts are semantically equivalent:
+- Keep the more specific/detailed text
+- Score = round(average of scores) + any boost
+- Mark modified=true
+
+# Examples
+
+Input:
+  existing_facts: [{"text": "User likes coffee", "score": 4}]
+  facts_to_boost: [{"text": "User prefers coffee drinks", "amount": 2}]
+Output:
+  facts: [{"text": "User likes coffee", "score": 6, "modified": true}]
+
+Input:
+  existing_facts: [
+    {"text": "User likes coffee", "score": 4},
+    {"text": "User prefers black coffee", "score": 2}
+  ]
+  facts_to_boost: []
+Output:
+  facts: [{"text": "User prefers black coffee", "score": 3, "modified": true}]
+  // Merged: avg(4,2)=3, kept more specific text
+
+Input:
+  existing_facts: [{"text": "User uses Firefox", "score": 5}]
+  facts_to_boost: [{"text": "User likes Chrome", "amount": 1}]
+Output:
+  facts: [{"text": "User uses Firefox", "score": 5, "modified": false}]
+  // No match found, unchanged
+
+# Rules
+MUST: Use integer scores only
+MUST: Set modified=true when score changes OR facts merged
+MUST: Merge semantically equivalent facts
+NEVER: Add new facts not derived from existing_facts`,
+      message: `Update fact scores.
+
+<existing_facts>
+{{{existing_facts_json}}}
+</existing_facts>
+
+<facts_to_boost>
+{{{facts_to_boost_json}}}
+</facts_to_boost>
+
+Return facts array with text, score (integer), modified (boolean).`,
+      intelligence: 'LOW',
+      output_schema: FACT_COUNT_UPDATER_OUTPUT_SCHEMA
+    },
+    // Post-process: add timestamps for modified facts, prune if needed
+    {
+      type: 'function',
+      handler: (ctx: StepContext): StepResult => {
+        const llmFacts = (ctx.facts || []) as Array<{ text: string; score: number; modified: boolean }>;
+        const existingFacts = (ctx.existing_facts || []) as Fact[];
+        const now = Date.now();
+
+        // Build updated facts with timestamps
+        const updatedFacts: Fact[] = llmFacts.map(f => {
+          // Find original to preserve timestamp if not modified
+          const original = existingFacts.find(e => e.text === f.text);
+          return {
+            text: f.text,
+            score: f.score,
+            lastModified: f.modified ? now : (original?.lastModified || now)
+          };
+        });
+
+        // Prune oldest if over limit
+        const pruned = pruneOldestFacts(updatedFacts);
+
+        return { result: { updated_facts: pruned } };
+      }
+    }
+  ]
+};
+
+// =============================================================================
+// Shared Schemas
+// =============================================================================
 
 // Shared schemas
 const RIDDLER_OUTPUT_SCHEMA: JSONSchema = {
@@ -36,8 +330,20 @@ const ANSWERER_OUTPUT_SCHEMA: JSONSchema = {
   properties: {
     answers: {
       type: 'array',
-      items: { type: 'string' },
-      description: 'List of answers to the questions based on existing knowledge'
+      items: {
+        type: 'object',
+        properties: {
+          answer: { type: 'string', description: 'The answer to the question' },
+          facts_used: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Quoted fact texts from KB that provided this answer'
+          }
+        },
+        required: ['answer', 'facts_used'],
+        additionalProperties: false
+      },
+      description: 'List of answers with the facts used to derive them'
     }
   },
   required: ['answers'],
@@ -155,7 +461,7 @@ export const ANSWERER_ACTION: Action = {
     properties: {
       existing_knowledge_base: {
         type: 'string',
-        description: 'The existing knowledge base to search for answers'
+        description: 'The existing knowledge base as prose'
       },
       questions: {
         type: 'array',
@@ -174,26 +480,31 @@ export const ANSWERER_ACTION: Action = {
 # Critical Rules
 MUST: Answer using ONLY information in the knowledge base.
 MUST: Return "Not found in knowledge base" if answer not present.
+MUST: Return the quoted fact texts used.
 NEVER: Use external knowledge or make inferences.
 
-# Answer Guidelines
-- 1-2 sentences maximum
-- Quote or paraphrase from knowledge base
-- If partial match, answer what's known + note what's missing
+# Answer Format
+For each question, return:
+- answer: The response (1-2 sentences or "Not found in knowledge base")
+- facts_used: Array of quoted fact texts that provided the answer
 
 # Examples
 
-Knowledge base: "User prefers dark mode."
+Knowledge base: "User prefers dark mode. User uses Firefox."
+
 Q: "What theme does the user prefer?"
-A: "The user prefers dark mode."
+→ { "answer": "The user prefers dark mode.", "facts_used": ["User prefers dark mode"] }
 
-Knowledge base: "User prefers dark mode."
 Q: "What browser does the user use?"
-A: "Not found in knowledge base."
+→ { "answer": "The user uses Firefox.", "facts_used": ["User uses Firefox"] }
 
-Knowledge base: "User likes coffee and tea."
+Q: "What operating system does the user use?"
+→ { "answer": "Not found in knowledge base.", "facts_used": [] }
+
+Knowledge base: "User likes coffee and prefers it black."
+
 Q: "What beverages does the user like?"
-A: "The user likes coffee and tea."`,
+→ { "answer": "The user likes coffee and prefers it black.", "facts_used": ["User likes coffee and prefers it black"] }`,
       message: `Answer each question using ONLY the knowledge base.
 
 <knowledge_base>
@@ -206,7 +517,8 @@ A: "The user likes coffee and tea."`,
 {{/questions}}
 </questions>
 
-For each question: answer from knowledge base OR "Not found in knowledge base".`,
+For each question: answer from knowledge base OR "Not found in knowledge base".
+Include facts_used array with quoted fact texts that provided each answer.`,
       intelligence: 'MEDIUM',
       output_schema: ANSWERER_OUTPUT_SCHEMA
     }
@@ -354,32 +666,44 @@ export const ADAPTAR_ACTION: Action = {
       system_prompt: `You merge new knowledge into existing knowledge bases.
 
 # Critical Rules
-MUST: Preserve ALL existing content - never delete.
+MUST: Preserve ALL existing content - never delete facts.
+MUST: Preserve relevance counts [N] on all facts.
 MUST: Add only information from provided sources.
-MUST: Keep result concise and organized.
 
-# Merge Strategy
-1. Start with existing knowledge base (verbatim)
-2. Identify gaps (questions not answered)
-3. Add new facts that fill those gaps
-4. Remove redundancy (same fact stated twice)
-5. Group related information together
+# Relevance Count Rules
 
-# Format Guidelines
-- Use consistent formatting with existing content
-- Keep statements concise (1 sentence per fact)
-- Group by topic if content is substantial
+| Action | Count Rule |
+|--------|------------|
+| Add new fact | Start with [1] |
+| Fact unchanged | Keep existing [N] |
+| Merge similar facts | Use max(1, higher_count * 0.5) |
+| Edit existing fact | Reduce to max(1, count * 0.5) |
 
 # Examples
 
-Existing: "User prefers dark mode."
-New: "User uses Firefox and prefers fast loading pages."
-Questions not answered: ["What browser does user use?"]
-→ Updated: "User prefers dark mode. User uses Firefox and prefers fast loading pages."
+Existing: "User prefers dark mode [8]."
+New: "User prefers dark mode and large fonts."
+→ Updated: "User prefers dark mode and large fonts [4]." (edited, count halved)
 
-Existing: "User likes coffee."
-New: "User likes coffee and prefers it black."
-→ Updated: "User likes coffee and prefers it black." (merged, not duplicated)`,
+Existing: "User likes coffee [3]."
+New: "User drinks tea."
+→ Updated: "User likes coffee [3]. User drinks tea [1]." (new fact added)
+
+Existing: "User likes coffee [6]. User likes tea [2]."
+New: "User enjoys hot beverages."
+→ Updated: "User enjoys hot beverages including coffee and tea [3]." (merged, max(6,2)*0.5=3)
+
+Existing: "User prefers Python [4]."
+New: (no change to this fact)
+→ Updated: "User prefers Python [4]." (unchanged, keep count)
+
+# Merge Process
+1. Keep all existing facts with their counts
+2. Add new facts with [1]
+3. Merge overlapping facts (halve the higher count, min 1)
+4. Group related information
+
+IMPORTANT: Every fact MUST end with [N] where N ≥ 1.`,
       message: `Merge new knowledge into the existing base.
 
 <new_knowledge>
@@ -398,7 +722,7 @@ New: "User likes coffee and prefers it black."
 </questions_needing_answers>
 {{/questions_not_answered}}
 
-Preserve all existing content. Add new facts that answer the gaps. Remove redundancy.`,
+Preserve all existing content with counts. Add new facts with [1]. Merge overlapping facts (halve count). Every fact MUST have [N] suffix.`,
       intelligence: 'MEDIUM',
       output_schema: ADAPTAR_OUTPUT_SCHEMA
     }
@@ -409,14 +733,14 @@ Preserve all existing content. Add new facts that answer the gaps. Remove redund
  * KNOWLEDGE_BASE_ADAPTOR - Full orchestrated workflow
  *
  * Flow:
- * 1. RIDDLER: Generate Q&A from new knowledge
- * 2. Build questions list (function)
- * 3. ANSWERER: Try to answer using existing knowledge
- * 4. Build comparisons (function)
- * 5. CHECKER: Rate the answers
- * 6. Filter low scores (function)
- * 7. ADAPTAR: Update knowledge base if needed
- * 8. Build final result (function)
+ * 1. Parse KB and convert to numbered list for RIDDLER
+ * 2. RIDDLER: Generate Q&A from new knowledge
+ * 3. ANSWERER: Answer using numbered KB
+ * 4. CHECKER: Rate answers
+ * 5. Build facts_to_boost from high-scoring answers (rating >= 6)
+ * 6. FACT_COUNT_UPDATER: Semantic match, merge, update scores
+ * 7. ADAPTAR: Add new facts if needed
+ * 8. Build final result
  */
 export const KNOWLEDGE_BASE_ADAPTOR_ACTION: Action = {
   name: 'KNOWLEDGE_BASE_ADAPTOR',
@@ -435,21 +759,31 @@ export const KNOWLEDGE_BASE_ADAPTOR_ACTION: Action = {
       },
       existing_knowledge_base: {
         type: 'string',
-        description: 'Current knowledge base to test and update'
+        description: 'Current knowledge base (JSON format) to test and update'
       }
     },
     required: ['new_knowledge_chunk', 'existing_knowledge_base'],
     additionalProperties: false
   },
   steps: [
-    // Step 1: Map new_knowledge_chunk to knowledge_chunk for RIDDLER
+    // Step 1: Parse KB and prepare for RIDDLER
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
         const newKnowledge = (ctx as StepContext & { new_knowledge_chunk: string }).new_knowledge_chunk;
+        const existingKB = ctx.existing_knowledge_base as string;
+
+        // Parse KB into facts array
+        const facts = parseKnowledgeBase(existingKB);
+
+        // Convert to prose for ANSWERER
+        const proseKB = factsToProse(facts);
+
         return {
           result: {
-            knowledge_chunk: newKnowledge
+            knowledge_chunk: newKnowledge,
+            parsed_facts: facts,
+            existing_knowledge_base: proseKB  // Override with prose format for ANSWERER
           }
         };
       }
@@ -458,7 +792,7 @@ export const KNOWLEDGE_BASE_ADAPTOR_ACTION: Action = {
     // Step 2: Generate Q&A from new knowledge
     { type: 'action', action: RIDDLER_ACTION.name },
 
-    // Step 2: Extract questions for answerer
+    // Step 3: Extract questions for answerer
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
@@ -472,15 +806,15 @@ export const KNOWLEDGE_BASE_ADAPTOR_ACTION: Action = {
       }
     },
 
-    // Step 3: Answer questions using existing knowledge
+    // Step 4: Answer questions using existing knowledge (numbered list)
     { type: 'action', action: ANSWERER_ACTION.name },
 
-    // Step 4: Build comparisons for checker
+    // Step 5: Build comparisons for checker
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
         const riddlerAnswers = (ctx.riddler_answers || []) as Array<{ question: string; answer: string }>;
-        const studentAnswers = (ctx.answers || []) as Array<{ question: string; answer: string }>;
+        const studentAnswers = (ctx.answers || []) as Array<{ answer: string; facts_used: string[] }>;
 
         return {
           result: {
@@ -488,58 +822,123 @@ export const KNOWLEDGE_BASE_ADAPTOR_ACTION: Action = {
               question: item.question,
               correct_answer: item.answer,
               student_answer: studentAnswers[i]?.answer || 'Not found in knowledge base'
-            }))
+            })),
+            answerer_results: studentAnswers
           }
         };
       }
     },
 
-    // Step 5: Check answer correctness
+    // Step 6: Check answer correctness
     { type: 'action', action: CHECKER_ACTION.name },
 
-    // Step 6: Filter questions with low scores
+    // Step 7: Build facts_to_boost from high-scoring answers
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
-        const ratings = (ctx.ratings || []) as Array<{ question: string; rating: number }>;
+        const ratings = (ctx.ratings || []) as number[];
         const comparisons = (ctx.comparisons || []) as Array<{ question: string }>;
+        const answererResults = (ctx.answerer_results || []) as Array<{ answer: string; facts_used: string[] }>;
+        const parsedFacts = (ctx.parsed_facts || []) as Fact[];
 
+        // Filter questions with low scores
         const questionsNotAnswered = ratings
-          .map((r, i) => ({ ...r, question: comparisons[i]?.question || r.question }))
+          .map((rating, i) => ({ rating, question: comparisons[i]?.question }))
           .filter(item => item.rating <= 5)
           .map(item => item.question);
 
         const avgScore = ratings.length > 0
-          ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length
+          ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
           : 0;
+
+        // Build facts_to_boost from high-scoring answers (rating >= 6)
+        // facts_used is now an array of text strings directly
+        const factsToBoost: Array<{ text: string; amount: number }> = [];
+        ratings.forEach((rating, i) => {
+          if (rating >= 6 && answererResults[i]?.facts_used?.length > 0) {
+            answererResults[i].facts_used.forEach(factText => {
+              const existing = factsToBoost.find(f => f.text.toLowerCase().trim() === factText.toLowerCase().trim());
+              if (existing) {
+                existing.amount += 1;
+              } else {
+                factsToBoost.push({ text: factText, amount: 1 });
+              }
+            });
+          }
+        });
+
+        // Convert facts to format for FACT_COUNT_UPDATER
+        const existingFactsForUpdater = parsedFacts.map(f => ({ text: f.text, score: f.score }));
 
         return {
           result: {
             questions_not_answered: questionsNotAnswered,
             average_score: avgScore,
-            needs_update: questionsNotAnswered.length > 0
+            needs_update: questionsNotAnswered.length > 0,
+            needs_score_update: factsToBoost.length > 0,
+            existing_facts: existingFactsForUpdater,
+            facts_to_boost: factsToBoost,
+            parsed_facts: parsedFacts  // Preserve for later
           }
         };
       }
     },
 
-    // Step 7: Update knowledge base if needed (skip if no gaps)
+    // Step 8: Update fact scores via FACT_COUNT_UPDATER (skip if no boosts)
+    {
+      type: 'action',
+      action: FACT_COUNT_UPDATER_ACTION.name,
+      condition: (ctx: StepContext) => (ctx as { needs_score_update?: boolean }).needs_score_update === true
+    },
+
+    // Step 9: Merge updated facts back
+    {
+      type: 'function',
+      handler: (ctx: StepContext): StepResult => {
+        const updatedFacts = (ctx.updated_facts || ctx.parsed_facts || []) as Fact[];
+
+        // Convert back to JSON for ADAPTAR (keeping prose format for backwards compat)
+        const kbForAdaptar = factsToProse(updatedFacts);
+
+        return {
+          result: {
+            existing_knowledge_base: kbForAdaptar,
+            updated_facts_internal: updatedFacts,
+            facts_incremented: ctx.needs_score_update || false
+          }
+        };
+      }
+    },
+
+    // Step 10: Update knowledge base if needed (skip if no gaps) - adds new facts
     {
       type: 'llm',
       skip_if: (ctx: StepContext) => !ctx.needs_update,
-      system_prompt: `You merge new knowledge into existing knowledge bases.
+      system_prompt: `You add new facts to an existing knowledge base.
 
 # Critical Rules
-MUST: Preserve ALL existing content - never delete facts.
-MUST: Add only information from provided sources.
-MUST: Remove redundancy (don't duplicate facts).
+MUST: Preserve ALL existing facts exactly as provided.
+MUST: Add only NEW facts from the new knowledge that answer gap questions.
+MUST: New facts should be concise (1 sentence each).
+NEVER: Modify or merge existing facts.
+NEVER: Add facts that duplicate existing information.
 
-# Merge Process
-1. Keep all existing content
-2. Add new facts that answer the gap questions
-3. Merge overlapping facts (don't repeat)
-4. Group related information`,
-      message: `Merge new knowledge into the existing base.
+# Output Format
+Return the existing knowledge base prose PLUS any new facts.
+New facts should be appended, each ending with [1].
+
+# Examples
+
+Existing: "User prefers dark mode. User uses Firefox."
+New: "User likes coffee."
+Gap: "What beverages does the user like?"
+→ "User prefers dark mode. User uses Firefox. User likes coffee [1]."
+
+Existing: "User prefers Python."
+New: "User prefers Python for data science."
+Gap: "What does the user use Python for?"
+→ "User prefers Python. User uses Python for data science [1]."`,
+      message: `Add new facts to answer gap questions.
 
 <new_knowledge>
 {{{new_knowledge_chunk}}}
@@ -555,22 +954,54 @@ MUST: Remove redundancy (don't duplicate facts).
 {{/questions_not_answered}}
 </questions_needing_answers>
 
-Output the merged knowledge base. Preserve existing + add facts for gaps. No duplicates.`,
+Output existing facts plus new facts with [1] suffix.`,
       intelligence: 'MEDIUM',
       output_schema: ADAPTAR_OUTPUT_SCHEMA
     },
 
-    // Step 8: Build final result
+    // Step 11: Convert final result to JSON format
     {
       type: 'function',
       handler: (ctx: StepContext): StepResult => {
+        const updatedFactsInternal = (ctx.updated_facts_internal || []) as Fact[];
+        const updatedKBProse = ctx.updated_knowledge_base as string | undefined;
+        const now = Date.now();
+
+        let finalFacts: Fact[];
+
+        if (ctx.needs_update && updatedKBProse) {
+          // Parse the ADAPTAR output (prose with [N] counts) and merge with internal facts
+          const newFactsFromAdaptar = parseProseWithCounts(updatedKBProse);
+
+          // Find truly new facts (not in internal)
+          const existingTexts = new Set(updatedFactsInternal.map(f => f.text.toLowerCase().trim()));
+          const newFacts = newFactsFromAdaptar.filter(f =>
+            !existingTexts.has(f.text.toLowerCase().trim())
+          ).map(f => ({
+            text: f.text,
+            score: 1,  // New facts always start with score 1
+            lastModified: now
+          }));
+
+          finalFacts = [...updatedFactsInternal, ...newFacts];
+        } else {
+          finalFacts = updatedFactsInternal;
+        }
+
+        // Prune if over limit
+        const prunedFacts = pruneOldestFacts(finalFacts);
+
+        // Convert to JSON string for storage
+        const finalKB = formatKnowledgeBase(prunedFacts);
+
         return {
           result: {
             average_score: ctx.average_score,
-            updated_knowledge_base: ctx.updated_knowledge_base || ctx.existing_knowledge_base,
+            updated_knowledge_base: finalKB,
             questions_tested: (ctx.riddler_answers as Array<unknown> || []).length,
             questions_not_answered: ctx.questions_not_answered,
-            knowledge_updated: ctx.needs_update || false
+            knowledge_updated: ctx.needs_update || false,
+            facts_incremented: ctx.facts_incremented || false
           }
         };
       }
@@ -584,5 +1015,6 @@ export const knowledgeBaseActions: Action[] = [
   ANSWERER_ACTION,
   CHECKER_ACTION,
   ADAPTAR_ACTION,
+  FACT_COUNT_UPDATER_ACTION,
   KNOWLEDGE_BASE_ADAPTOR_ACTION
 ];

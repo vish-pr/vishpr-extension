@@ -74,7 +74,10 @@ async function showLoadingUIStep(ctx: StepContext): Promise<StepResult> {
 // Step 3: Wait for user response and build final result
 async function waitForResponseStep(ctx: StepContext): Promise<StepResult> {
   const questions = ctx.questions as Question[];
-  const generated = (ctx as Record<string, unknown>).generated as ClarificationUIConfig['generated'];
+  const generated = (ctx as Record<string, unknown>).generated as Array<{
+    question_index: number;
+    options: Option[];
+  }>;
 
   let user_responses: UserResponse[] = [];
   if (pendingResponsePromise) {
@@ -85,10 +88,20 @@ async function waitForResponseStep(ctx: StepContext): Promise<StepResult> {
 
   return {
     result: {
-      answers: user_responses.map(r => ({
-        value: r.value,
-        is_default: r.timed_out
-      }))
+      answers: user_responses.map(r => {
+        // Find the selected option to get its preference_source
+        const questionGen = generated?.find(g => g.question_index === r.question_index);
+        const selectedOption = questionGen?.options?.find(opt => opt.label === r.value);
+
+        // Pass through preference_source directly (already text strings)
+        const preferenceFacts = selectedOption?.preference_source || [];
+
+        return {
+          value: r.value,
+          is_default: r.timed_out,
+          preference_facts_used: preferenceFacts
+        };
+      })
     }
   };
 }
@@ -103,6 +116,7 @@ interface Option {
   label: string;
   confidence: number;
   reasoning: string;
+  preference_source?: string[];  // Quoted fact texts from KB that informed this option
 }
 
 // Internal config for UI update (not the final result)
@@ -118,6 +132,7 @@ interface ClarificationUIConfig {
 export interface ClarificationAnswer {
   value: string;
   is_default: boolean;  // true if auto-selected due to timeout
+  preference_facts_used?: string[];  // Facts from KB that informed the selected option
 }
 
 // Schemas
@@ -157,7 +172,12 @@ const OUTPUT_SCHEMA: JSONSchema = {
               properties: {
                 label: { type: 'string' },
                 confidence: { type: 'number' },
-                reasoning: { type: 'string' }
+                reasoning: { type: 'string' },
+                preference_source: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Quoted fact texts from KB that informed this option confidence'
+                }
               },
               required: ['label', 'confidence', 'reasoning']
             }
@@ -213,45 +233,55 @@ MUST: Differentiate scores (no equal confidence for all)
 NEVER: Score above 70 without explicit evidence
 NEVER: Invent evidence not present in context
 
+# Preference Tracking
+When scoring confidence based on user_preferences KB:
+MUST: Include the quoted preference text in preference_source array
+Example:
+  KB: "User prefers fast delivery. User uses Firefox."
+  Option: {label: "Express", confidence: 88, reasoning: "User prefers fast delivery", preference_source: ["User prefers fast delivery"]}
+
+If option is NOT based on a KB preference, omit preference_source or use empty array.
+
 # Examples
 
 Question: "What format do you want?"
 Context: User building a web API
 → [
-    {label: "JSON", confidence: 78, reasoning: "Web APIs use JSON by convention"},
-    {label: "XML", confidence: 14, reasoning: "Legacy format, less common"},
-    {label: "CSV", confidence: 8, reasoning: "Rarely used for APIs"}
+    {label: "JSON", confidence: 78, reasoning: "Web APIs use JSON by convention", preference_fact_indices: []},
+    {label: "XML", confidence: 14, reasoning: "Legacy format, less common", preference_fact_indices: []},
+    {label: "CSV", confidence: 8, reasoning: "Rarely used for APIs", preference_fact_indices: []}
   ]
 
 Question: "Which product?"
 Context: User wants headphones under $150. Page: Sony $199, Bose $149, AirPods $179
 → [
-    {label: "Bose ($149)", confidence: 85, reasoning: "Only option within $150 budget"},
-    {label: "AirPods ($179)", confidence: 10, reasoning: "$29 over budget"},
-    {label: "Sony ($199)", confidence: 5, reasoning: "$49 over budget"}
+    {label: "Bose ($149)", confidence: 85, reasoning: "Only option within $150 budget", preference_fact_indices: []},
+    {label: "AirPods ($179)", confidence: 10, reasoning: "$29 over budget", preference_fact_indices: []},
+    {label: "Sony ($199)", confidence: 5, reasoning: "$49 over budget", preference_fact_indices: []}
   ]
 
 Question: "Delete these files?"
 Context: User asked to clean temp files, 3 selected
 → [
-    {label: "Yes, delete all 3", confidence: 65, reasoning: "User requested cleanup"},
-    {label: "No, keep them", confidence: 25, reasoning: "Deletion is irreversible"},
-    {label: "Delete oldest only", confidence: 10, reasoning: "Partial compromise"}
+    {label: "Yes, delete all 3", confidence: 65, reasoning: "User requested cleanup", preference_fact_indices: []},
+    {label: "No, keep them", confidence: 25, reasoning: "Deletion is irreversible", preference_fact_indices: []},
+    {label: "Delete oldest only", confidence: 10, reasoning: "Partial compromise", preference_fact_indices: []}
   ]
 
 Question: "Which shipping speed?"
-Context: User preferences KB says "prefers fast delivery"
+Context: User preferences KB: "User prefers fast delivery."
 → [
-    {label: "Express (2-day)", confidence: 88, reasoning: "User prefers fast delivery"},
-    {label: "Standard (5-7 day)", confidence: 8, reasoning: "Cheaper but slower"},
-    {label: "Economy (10+ day)", confidence: 4, reasoning: "Conflicts with preference"}
+    {label: "Express (2-day)", confidence: 88, reasoning: "User prefers fast delivery", preference_source: ["User prefers fast delivery"]},
+    {label: "Standard (5-7 day)", confidence: 8, reasoning: "Cheaper but slower", preference_source: []},
+    {label: "Economy (10+ day)", confidence: 4, reasoning: "Conflicts with preference", preference_source: []}
   ]
 
 # Output Requirements
 - Return exactly 3 options per question
 - Order by confidence descending
 - Keep reasoning under 15 words
-- Scores must sum to roughly 100 (±10)`;
+- Scores must sum to roughly 100 (±10)
+- Include preference_source array with quoted fact text when option is based on KB preferences`;
 
 // Action definition
 export const USER_CLARIFICATION_ACTION: Action = {
