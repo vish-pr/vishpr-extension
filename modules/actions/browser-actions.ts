@@ -5,7 +5,6 @@
 import type { Action, Message, StepContext, StepResult, JSONSchema } from './types/index.js';
 import { getChromeAPI } from '../chrome-api.js';
 import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
-import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
 import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
@@ -193,7 +192,7 @@ Output cleaned HTML. Interactive elements have data-vish-id inline.`,
  */
 export const CLICK_ELEMENT: Action = {
   name: 'CLICK_ELEMENT',
-  description: 'Click a button, link, or interactive element using its element ID from READ_PAGE. Supports modifiers: newTab (open in background tab), newTabActive (open in foreground tab), download (download instead of navigate). Requires elementId from READ_PAGE results.',
+  description: 'Click a button, link, or interactive element using its element ID from READ_PAGE. Supports modifiers: newTab (open in background tab), newTabActive (open in foreground tab), download (download instead of navigate). Requires elementId from READ_PAGE results. When a click causes navigation, automatically extracts page content (disable with autoReadOnNavigate=false).',
   examples: [
     'Click the login button',
     'Open that link in a new tab'
@@ -206,6 +205,7 @@ export const CLICK_ELEMENT: Action = {
       newTab: { type: 'boolean', description: 'Open link in new background tab' },
       newTabActive: { type: 'boolean', description: 'Open link in new foreground tab' },
       download: { type: 'boolean', description: 'Download the link instead of navigating' },
+      autoReadOnNavigate: { type: 'boolean', description: 'Auto-extract page content if click causes navigation (default: true)' },
       justification: { type: 'string', description: 'Why clicking this element' }
     },
     required: ['tabId', 'elementId'],
@@ -221,6 +221,28 @@ export const CLICK_ELEMENT: Action = {
           newTabActive: ctx.newTabActive || false,
           download: ctx.download || false
         });
+
+        // Auto-read if navigation detected and not disabled
+        if (clickResult.navigated && ctx.autoReadOnNavigate !== false) {
+          try {
+            const content = await chrome.extractContent(ctx.tabId);
+            return {
+              result: {
+                ...clickResult,
+                page: {
+                  url: content.url,
+                  title: content.title,
+                  html: content.content,
+                  contentMode: content.contentMode
+                }
+              }
+            };
+          } catch (e) {
+            // Content extraction failed, return click result anyway
+            return { result: { ...clickResult, autoReadError: (e as Error).message } };
+          }
+        }
+
         return { result: clickResult };
       }
     }
@@ -263,7 +285,7 @@ export const SWITCH_TAB: Action = {
  */
 export const CHANGE_TAB_URL: Action = {
   name: 'CHANGE_TAB_URL',
-  description: 'Change the URL of an existing tab. Use when you want to navigate within the same tab.',
+  description: 'Change the URL of an existing tab and automatically extract page content. Use when you want to navigate within the same tab. Returns page content directly (disable with autoRead=false).',
   examples: [
     'Go to https://google.com in this tab',
     'Navigate to https://github.com'
@@ -273,6 +295,7 @@ export const CHANGE_TAB_URL: Action = {
     properties: {
       tabId: { type: 'number', description: 'Tab ID' },
       url: { type: 'string', description: 'URL to navigate to' },
+      autoRead: { type: 'boolean', description: 'Auto-extract page content after navigation (default: true)' },
       justification: { type: 'string', description: 'Why navigating to this URL' }
     },
     required: ['tabId', 'url'],
@@ -284,7 +307,27 @@ export const CHANGE_TAB_URL: Action = {
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
         const navResult = await chrome.navigateTo(ctx.tabId, ctx.url);
-        return { result: navResult };
+
+        // Skip auto-read if explicitly disabled
+        if (ctx.autoRead === false) {
+          return { result: navResult };
+        }
+
+        // No explicit wait needed - extractContent waits internally for DOM stability
+        try {
+          const content = await chrome.extractContent(ctx.tabId);
+          return {
+            result: {
+              ...navResult,
+              title: content.title,
+              html: content.content,
+              contentMode: content.contentMode
+            }
+          };
+        } catch (e) {
+          // Content extraction failed, return nav result anyway
+          return { result: { ...navResult, autoReadError: (e as Error).message } };
+        }
       }
     }
   ]
@@ -295,7 +338,7 @@ export const CHANGE_TAB_URL: Action = {
  */
 export const OPEN_URL_IN_NEW_TAB: Action = {
   name: 'OPEN_URL_IN_NEW_TAB',
-  description: 'Open a URL in a new browser tab.',
+  description: 'Open a URL in a new browser tab and automatically extract page content. Returns page content directly (disable with autoRead=false).',
   examples: [
     'Open https://google.com in a new tab',
     'Open this link in new tab'
@@ -305,6 +348,7 @@ export const OPEN_URL_IN_NEW_TAB: Action = {
     properties: {
       url: { type: 'string', description: 'URL to open' },
       active: { type: 'boolean', description: 'Whether to focus the new tab (default: true)' },
+      autoRead: { type: 'boolean', description: 'Auto-extract page content after opening (default: true)' },
       justification: { type: 'string', description: 'Why opening in new tab' }
     },
     required: ['url'],
@@ -316,7 +360,27 @@ export const OPEN_URL_IN_NEW_TAB: Action = {
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
         const result = await chrome.openInNewTab(ctx.url, ctx.active ?? true);
-        return { result };
+
+        // Skip auto-read if explicitly disabled
+        if (ctx.autoRead === false) {
+          return { result };
+        }
+
+        // No explicit wait needed - extractContent waits internally for DOM stability
+        try {
+          const content = await chrome.extractContent(result.tabId);
+          return {
+            result: {
+              ...result,
+              title: content.title,
+              html: content.content,
+              contentMode: content.contentMode
+            }
+          };
+        } catch (e) {
+          // Content extraction failed, return result anyway
+          return { result: { ...result, autoReadError: (e as Error).message } };
+        }
       }
     }
   ]
@@ -474,7 +538,7 @@ export const CHECK_CHECKBOX: Action = {
  */
 export const SUBMIT_FORM: Action = {
   name: 'SUBMIT_FORM',
-  description: 'Submit a form by clicking a submit button or triggering form submission.',
+  description: 'Submit a form by clicking a submit button or triggering form submission. When submission causes navigation, automatically extracts page content (disable with autoReadOnNavigate=false).',
   examples: [
     'Submit the form',
     'Press the submit button'
@@ -484,6 +548,7 @@ export const SUBMIT_FORM: Action = {
     properties: {
       tabId: { type: 'number', description: 'Tab ID' },
       elementId: { type: 'number', description: 'Element ID for submit button or form element' },
+      autoReadOnNavigate: { type: 'boolean', description: 'Auto-extract page content if submission causes navigation (default: true)' },
       justification: { type: 'string', description: 'Why submitting this form' }
     },
     required: ['tabId', 'elementId'],
@@ -494,7 +559,46 @@ export const SUBMIT_FORM: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
+
+        // Get URL before submission to detect navigation
+        const urlBefore = (await chrome.extractContent(ctx.tabId)).url;
         const submitResult = await chrome.submitForm(ctx.tabId, ctx.elementId);
+
+        // Check if navigation occurred by comparing URLs
+        await new Promise(r => setTimeout(r, 500)); // Wait for potential navigation
+
+        let navigated = false;
+        try {
+          const urlAfter = (await chrome.extractContent(ctx.tabId)).url;
+          navigated = urlAfter !== urlBefore;
+        } catch {
+          // Tab may be navigating
+          navigated = true;
+        }
+
+        // Auto-read if navigation detected and not disabled
+        if (navigated && ctx.autoReadOnNavigate !== false) {
+          try {
+            // No explicit wait needed - extractContent waits internally for DOM stability
+            const content = await chrome.extractContent(ctx.tabId);
+            return {
+              result: {
+                ...submitResult,
+                navigated: true,
+                page: {
+                  url: content.url,
+                  title: content.title,
+                  html: content.content,
+                  contentMode: content.contentMode
+                }
+              }
+            };
+          } catch (e) {
+            // Content extraction failed, return submit result anyway
+            return { result: { ...submitResult, navigated: true, autoReadError: (e as Error).message } };
+          }
+        }
+
         return { result: submitResult };
       }
     }
@@ -541,23 +645,25 @@ export const SCROLL_TO: Action = {
 };
 
 /**
- * WAIT_FOR_LOAD action
+ * NAVIGATE_HISTORY action
  */
-export const WAIT_FOR_LOAD: Action = {
-  name: 'WAIT_FOR_LOAD',
-  description: 'Wait for the page to finish loading. Use after navigation or clicking links.',
+export const NAVIGATE_HISTORY: Action = {
+  name: 'NAVIGATE_HISTORY',
+  description: 'Navigate back or forward in browser history. Response includes canGoBack and canGoForward. Automatically extracts page content (disable with autoRead=false).',
   examples: [
-    'Wait for the page to load',
-    'Let the page finish loading'
+    'Go back',
+    'Go forward',
+    'Return to the previous page'
   ],
   input_schema: {
     type: 'object',
     properties: {
       tabId: { type: 'number', description: 'Tab ID' },
-      timeout_ms: { type: 'number', description: 'Maximum time to wait in milliseconds. Default: 10000' },
-      justification: { type: 'string', description: 'Why waiting for page load' }
+      direction: { type: 'string', enum: ['back', 'forward'], description: 'Navigation direction' },
+      autoRead: { type: 'boolean', description: 'Auto-extract page content after navigation (default: true)' },
+      justification: { type: 'string', description: 'Why navigating' }
     },
-    required: ['tabId'],
+    required: ['tabId', 'direction'],
     additionalProperties: true
   },
   steps: [
@@ -565,30 +671,51 @@ export const WAIT_FOR_LOAD: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const loadResult = await chrome.waitForLoad(ctx.tabId, ctx.timeout_ms || 10000);
-        return { result: loadResult };
+        const navResult = ctx.direction === 'back'
+          ? await chrome.goBack(ctx.tabId)
+          : await chrome.goForward(ctx.tabId);
+
+        // Skip auto-read if explicitly disabled or navigation failed
+        if (ctx.autoRead === false || !navResult.navigated) {
+          return { result: navResult };
+        }
+
+        // No explicit wait needed - extractContent waits internally for DOM stability
+        try {
+          const content = await chrome.extractContent(ctx.tabId);
+          return {
+            result: {
+              ...navResult,
+              title: content.title,
+              html: content.content,
+              contentMode: content.contentMode
+            }
+          };
+        } catch (e) {
+          // Content extraction failed, return nav result anyway
+          return { result: { ...navResult, autoReadError: (e as Error).message } };
+        }
       }
     }
   ]
 };
 
 /**
- * WAIT_FOR_ELEMENT action
+ * HOVER_ELEMENT action
  */
-export const WAIT_FOR_ELEMENT: Action = {
-  name: 'WAIT_FOR_ELEMENT',
-  description: 'Wait for a specific element to appear on the page. Requires elementId from a previous READ_PAGE.',
+export const HOVER_ELEMENT: Action = {
+  name: 'HOVER_ELEMENT',
+  description: 'Hover over an element to trigger hover effects like dropdowns, tooltips, or menus. Requires elementId from READ_PAGE.',
   examples: [
-    'Wait for the search results to appear',
-    'Wait until the modal shows up'
+    'Hover over the dropdown menu',
+    'Show the tooltip by hovering'
   ],
   input_schema: {
     type: 'object',
     properties: {
       tabId: { type: 'number', description: 'Tab ID' },
       elementId: { type: 'number', description: 'Element ID from READ_PAGE' },
-      timeout_ms: { type: 'number', description: 'Maximum time to wait in milliseconds. Default: 5000' },
-      justification: { type: 'string', description: 'Why waiting for this element' }
+      justification: { type: 'string', description: 'Why hovering over this element' }
     },
     required: ['tabId', 'elementId'],
     additionalProperties: true
@@ -598,28 +725,104 @@ export const WAIT_FOR_ELEMENT: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const waitResult = await chrome.waitForElement(ctx.tabId, ctx.elementId, ctx.timeout_ms || 5000);
-        return { result: waitResult };
+        const result = await chrome.hoverElement(ctx.tabId, ctx.elementId);
+        return { result };
       }
     }
   ]
 };
 
 /**
- * GO_BACK action
+ * PRESS_KEY action
  */
-export const GO_BACK: Action = {
-  name: 'GO_BACK',
-  description: 'Navigate back one page in browser history. Response includes canGoBack and canGoForward to indicate if further navigation is possible.',
+export const PRESS_KEY: Action = {
+  name: 'PRESS_KEY',
+  description: 'Press a keyboard key with optional modifiers. Useful for Enter to submit, Escape to close, arrow keys for navigation.',
   examples: [
-    'Go back',
-    'Return to the previous page'
+    'Press Enter to submit',
+    'Press Escape to close the dialog',
+    'Press Tab to move to next field'
   ],
   input_schema: {
     type: 'object',
     properties: {
       tabId: { type: 'number', description: 'Tab ID' },
-      justification: { type: 'string', description: 'Why going back' }
+      key: { type: 'string', description: 'Key to press (Enter, Tab, Escape, ArrowUp, ArrowDown, a-z, etc.)' },
+      ctrlKey: { type: 'boolean', description: 'Hold Ctrl key' },
+      metaKey: { type: 'boolean', description: 'Hold Meta/Cmd key' },
+      shiftKey: { type: 'boolean', description: 'Hold Shift key' },
+      altKey: { type: 'boolean', description: 'Hold Alt key' },
+      justification: { type: 'string', description: 'Why pressing this key' }
+    },
+    required: ['tabId', 'key'],
+    additionalProperties: true
+  },
+  steps: [
+    {
+      type: 'function',
+      handler: async (ctx: StepContext): Promise<StepResult> => {
+        const chrome = getChromeAPI();
+        const result = await chrome.pressKey(ctx.tabId, ctx.key, {
+          ctrlKey: ctx.ctrlKey || false,
+          metaKey: ctx.metaKey || false,
+          shiftKey: ctx.shiftKey || false,
+          altKey: ctx.altKey || false
+        });
+        return { result };
+      }
+    }
+  ]
+};
+
+/**
+ * HANDLE_DIALOG action
+ */
+export const HANDLE_DIALOG: Action = {
+  name: 'HANDLE_DIALOG',
+  description: 'Configure how to handle the next browser dialog (alert, confirm, prompt). Must be called BEFORE the dialog appears.',
+  examples: [
+    'Accept the next confirmation dialog',
+    'Dismiss the next alert',
+    'Enter text in the next prompt'
+  ],
+  input_schema: {
+    type: 'object',
+    properties: {
+      tabId: { type: 'number', description: 'Tab ID' },
+      accept: { type: 'boolean', description: 'Whether to accept (true) or dismiss (false) the dialog' },
+      promptText: { type: 'string', description: 'Text to enter if the dialog is a prompt' },
+      justification: { type: 'string', description: 'Why handling dialog this way' }
+    },
+    required: ['tabId', 'accept'],
+    additionalProperties: true
+  },
+  steps: [
+    {
+      type: 'function',
+      handler: async (ctx: StepContext): Promise<StepResult> => {
+        const chrome = getChromeAPI();
+        const result = await chrome.handleDialog(ctx.tabId, ctx.accept, ctx.promptText);
+        return { result };
+      }
+    }
+  ]
+};
+
+/**
+ * GET_DIALOGS action
+ */
+export const GET_DIALOGS: Action = {
+  name: 'GET_DIALOGS',
+  description: 'Get the history of dialogs that have appeared on the page (alerts, confirms, prompts).',
+  examples: [
+    'Show me the dialog history',
+    'What dialogs have appeared?'
+  ],
+  input_schema: {
+    type: 'object',
+    properties: {
+      tabId: { type: 'number', description: 'Tab ID' },
+      justification: { type: 'string', description: 'Why getting dialog history' }
     },
     required: ['tabId'],
     additionalProperties: true
@@ -629,28 +832,31 @@ export const GO_BACK: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const backResult = await chrome.goBack(ctx.tabId);
-        return { result: backResult };
+        const result = await chrome.getDialogs(ctx.tabId);
+        return { result };
       }
     }
   ]
 };
 
 /**
- * GO_FORWARD action
+ * GET_NETWORK_REQUESTS action
  */
-export const GO_FORWARD: Action = {
-  name: 'GO_FORWARD',
-  description: 'Navigate forward one page in browser history. Response includes canGoBack and canGoForward to indicate if further navigation is possible.',
+export const GET_NETWORK_REQUESTS: Action = {
+  name: 'GET_NETWORK_REQUESTS',
+  description: 'Get network requests made by the page. Useful for debugging, monitoring API calls, or checking resource loading.',
   examples: [
-    'Go forward',
-    'Return to the page I was just on'
+    'Show me the API requests',
+    'What network requests were made?'
   ],
   input_schema: {
     type: 'object',
     properties: {
       tabId: { type: 'number', description: 'Tab ID' },
-      justification: { type: 'string', description: 'Why going forward' }
+      type: { type: 'string', description: 'Filter by request type: xmlhttprequest, fetch, script, stylesheet, image, etc.' },
+      urlPattern: { type: 'string', description: 'Filter by URL regex pattern' },
+      status: { type: 'string', description: 'Filter by status: pending, completed, error' },
+      justification: { type: 'string', description: 'Why getting network requests' }
     },
     required: ['tabId'],
     additionalProperties: true
@@ -660,8 +866,12 @@ export const GO_FORWARD: Action = {
       type: 'function',
       handler: async (ctx: StepContext): Promise<StepResult> => {
         const chrome = getChromeAPI();
-        const forwardResult = await chrome.goForward(ctx.tabId);
-        return { result: forwardResult };
+        const result = chrome.getNetworkRequests(ctx.tabId, {
+          type: ctx.type,
+          urlPattern: ctx.urlPattern,
+          status: ctx.status
+        });
+        return { result };
       }
     }
   ]
@@ -682,10 +892,12 @@ export const browserActions: Action[] = [
   CHECK_CHECKBOX,
   SUBMIT_FORM,
   SCROLL_TO,
-  WAIT_FOR_LOAD,
-  WAIT_FOR_ELEMENT,
-  GO_BACK,
-  GO_FORWARD
+  NAVIGATE_HISTORY,
+  HOVER_ELEMENT,
+  PRESS_KEY,
+  HANDLE_DIALOG,
+  GET_DIALOGS,
+  GET_NETWORK_REQUESTS
 ];
 
 /**
@@ -726,10 +938,23 @@ CORE PRINCIPLES
 • If the goal is ambiguous, request clarification via USER_CLARIFICATION_ACTION.
 
 ────────────────────────────────────────
-AUTONOMOUS NAVIGATION RULE (CRITICAL)
+AUTO-READ BEHAVIOR (IMPORTANT)
+────────────────────────────────────────
+Navigation actions automatically extract and return page content:
+• CHANGE_TAB_URL → returns page content after navigation
+• OPEN_URL_IN_NEW_TAB → returns page content after opening
+• CLICK_ELEMENT → returns page content if click causes navigation
+• SUBMIT_FORM → returns page content if submission causes navigation
+• GO_BACK / GO_FORWARD → returns page content after navigation
+
+You do NOT need READ_PAGE after these actions - content is already in the result.
+Only use READ_PAGE when you need fresh element IDs after UI changes without navigation.
+
+────────────────────────────────────────
+AUTONOMOUS NAVIGATION RULE
 ────────────────────────────────────────
 If the user's goal requires web content AND no page is currently loaded:
-→ YOU MUST CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB to an appropriate public website before any READ_PAGE.
+→ Use CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB to navigate first.
 
 Examples:
 • Goal: "play music" → navigate to a music streaming site
@@ -737,13 +962,11 @@ Examples:
 • Goal: "check email" → navigate to a webmail provider
 
 ────────────────────────────────────────
-CRITICAL RULE
+ELEMENT INTERACTION RULE
 ────────────────────────────────────────
-MUST call READ_PAGE to obtain element IDs before ANY interaction
-(click, fill, select, check, submit).
-
+MUST have element IDs before interaction (click, fill, select, check, submit, hover).
+Element IDs come from: READ_PAGE result OR auto-read content from navigation actions.
 NEVER guess or invent element IDs.
-Element IDs ONLY come from the most recent READ_PAGE.
 
 ────────────────────────────────────────
 TOOLS
@@ -755,24 +978,23 @@ TOOLS
 WORKFLOW RULES
 ────────────────────────────────────────
 MUST:
-• CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB if no page context exists and goal requires content
-• READ_PAGE before ANY interaction
-• Use elementId from MOST RECENT READ_PAGE
-• Use FINAL_RESPONSE when task is complete or blocked or you have gathered data for request and need to format or present it to the user
+• Navigate first if no page context exists
+• Have element IDs before any element interaction
+• Use FINAL_RESPONSE when task is complete or blocked
 
 SHOULD:
-• READ_PAGE again after navigation or major UI change
-• Verify success with READ_PAGE if uncertain
+• Use READ_PAGE after SCROLL_TO or HOVER_ELEMENT to see updated content
+• Use PRESS_KEY for keyboard shortcuts (Enter to submit, Escape to close)
 
 NEVER:
-• Click or fill without READ_PAGE
+• Click or fill without element IDs
 • Invent element IDs, URLs, or tabs
 • Loop more than 2 times on the same failed action
 
 ────────────────────────────────────────
 ERROR HANDLING
 ────────────────────────────────────────
-• If element not found → READ_PAGE again
+• If element not found → READ_PAGE to get fresh IDs
 • If same error occurs twice → FINAL_RESPONSE with error
 • If interaction fails → try an alternative valid approach
 
@@ -780,19 +1002,22 @@ ERROR HANDLING
 INTENT MAPPING
 ────────────────────────────────────────
 "What is on this page?" → READ_PAGE
-"Show page content" → READ_PAGE
-"Go to https://example.com" → CHANGE_TAB_URL
-"Open https://example.com in new tab" → OPEN_URL_IN_NEW_TAB
-"Switch to tab 123" → SWITCH_TAB
-"Click the login button" → READ_PAGE → CLICK_ELEMENT
-"Search for 'laptop'" → READ_PAGE → FILL_FORM → SUBMIT_FORM
-"Finish" / "Done" / "Return result" → FINAL_RESPONSE
+"Go to URL" → CHANGE_TAB_URL (returns content)
+"Open URL in new tab" → OPEN_URL_IN_NEW_TAB (returns content)
+"Click the button" → CLICK_ELEMENT (may return new page content)
+"Fill form and submit" → FILL_FORM → SUBMIT_FORM (may return new page content)
+"Go back/forward" → NAVIGATE_HISTORY (returns content)
+"Scroll down" → SCROLL_TO → READ_PAGE (to see new content)
+"Press Enter" → PRESS_KEY
+"Hover menu" → HOVER_ELEMENT → READ_PAGE (to see dropdown)
+"Accept dialog" → HANDLE_DIALOG
+"Check API calls" → GET_NETWORK_REQUESTS
 
 ────────────────────────────────────────
 REMINDER
 ────────────────────────────────────────
-If no element IDs are available, READ_PAGE.
-If no page exists, use CHANGE_TAB_URL or OPEN_URL_IN_NEW_TAB first.
+Navigation actions auto-return page content - no separate READ_PAGE needed.
+Use READ_PAGE only when you need fresh element IDs after non-navigation UI changes.
 Use FINAL_RESPONSE to terminate.`,
       message: `Execute browser interaction.
 
@@ -830,10 +1055,12 @@ Decision:
           CHANGE_TAB_URL.name,
           OPEN_URL_IN_NEW_TAB.name,
           SCROLL_TO.name,
-          WAIT_FOR_LOAD.name,
-          WAIT_FOR_ELEMENT.name,
-          GO_BACK.name,
-          GO_FORWARD.name,
+          NAVIGATE_HISTORY.name,
+          HOVER_ELEMENT.name,
+          PRESS_KEY.name,
+          HANDLE_DIALOG.name,
+          GET_DIALOGS.name,
+          GET_NETWORK_REQUESTS.name,
           FINAL_RESPONSE_ACTION.name
         ],
         stop_action: FINAL_RESPONSE_ACTION.name,

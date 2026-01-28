@@ -4,7 +4,7 @@
   "license": "CC-BY-NC-4.0",
   "type": "module",
   "scripts": {
-    "test": "find . \\( -name '*.test.js' -o -name '*.test.ts' \\) -not -path './node_modules/*' -exec npx tsx {} \\;",
+    "test": "find . \\( -name '*.test.js' -o -name '*.test.ts' \\) -not -path './node_modules/*' -not -path './insp/*' -exec npx tsx {} \\;",
     "typecheck": "tsc --noEmit",
     "prebuild": "npm test && rm -rf dist && mkdir -p dist/icons && cp manifest.json sidepanel.html dist/ && cp icons/*.png dist/icons/",
     "build": "esbuild sidepanel.js background.js content.js --bundle --outdir=dist --format=esm --minify && npm run build:css",

@@ -8,7 +8,12 @@ const handlers = {
   [ContentAction.EXTRACT_CONTENT]: () => extractPageContent(),
   [ContentAction.CLICK_ELEMENT]: (msg) => clickElement(msg.elementId, msg.modifiers),
   [ContentAction.FILL_FORM]: (msg) => fillFormFields(msg.fields, msg.submit, msg.submitElementId),
-  [ContentAction.SCROLL_AND_WAIT]: (msg) => scrollAndWait(msg.direction, msg.pixels, msg.waitMs)
+  [ContentAction.SCROLL_AND_WAIT]: (msg) => scrollAndWait(msg.direction, msg.pixels, msg.waitMs),
+  [ContentAction.HOVER_ELEMENT]: (msg) => hoverElement(msg.elementId),
+  [ContentAction.PRESS_KEY]: (msg) => pressKey(msg.key, msg.modifiers),
+  [ContentAction.HANDLE_DIALOG]: (msg) => handleDialog(msg.accept, msg.promptText),
+  [ContentAction.GET_DIALOGS]: () => getDialogs(),
+  [ContentAction.EXTRACT_ACCESSIBILITY_TREE]: () => extractAccessibilityTree()
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -149,8 +154,47 @@ function extractTextareas(elementIdCounter) {
   });
 }
 
-// Main extraction function
-function extractPageContent() {
+// Helper: wait for DOM to stabilize (no mutations for quietPeriod ms)
+async function waitForDomStable(timeout = 3000, quietPeriod = 300) {
+  const startTime = Date.now();
+  let lastMutationTime = Date.now();
+
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      lastMutationTime = Date.now();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true
+    });
+
+    const checkStability = () => {
+      const elapsed = Date.now() - startTime;
+      const quietTime = Date.now() - lastMutationTime;
+
+      if (quietTime >= quietPeriod) {
+        observer.disconnect();
+        resolve({ stable: true, waitedMs: elapsed });
+      } else if (elapsed >= timeout) {
+        observer.disconnect();
+        resolve({ stable: false, waitedMs: elapsed });
+      } else {
+        setTimeout(checkStability, 50);
+      }
+    };
+
+    setTimeout(checkStability, 50);
+  });
+}
+
+// Main extraction function - now async with internal DOM stability wait
+async function extractPageContent() {
+  // Wait for DOM to stabilize before extraction
+  const stabilityResult = await waitForDomStable(3000, 300);
+
   // Shared counter for all interactive elements
   const elementIdCounter = { value: 0 };
 
@@ -176,6 +220,9 @@ function extractPageContent() {
     byteSize: cleaned.byteSize,
     rawHtmlSize: rawHtml.length,
     debugLog: cleaned.debugLog,
+    // DOM stability info
+    domStable: stabilityResult.stable,
+    domWaitMs: stabilityResult.waitedMs,
     // Interactive elements
     links,
     buttons,
@@ -341,5 +388,359 @@ async function scrollAndWait(direction, pixels, waitMs = 500) {
     current_y: window.scrollY,
     scrolled_pixels: window.scrollY - startY
   };
+}
+
+// ============================================================================
+// HOVER ELEMENT
+// ============================================================================
+
+function hoverElement(elementId) {
+  try {
+    const element = document.querySelector(`[data-vish-id="${elementId}"]`);
+    if (!element) {
+      return { success: false, error: `Element not found with ID: ${elementId}` };
+    }
+
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const eventOptions = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: centerX,
+      clientY: centerY
+    };
+
+    element.dispatchEvent(new MouseEvent('mouseenter', eventOptions));
+    element.dispatchEvent(new MouseEvent('mouseover', eventOptions));
+    element.dispatchEvent(new MouseEvent('mousemove', eventOptions));
+
+    return { success: true, elementId };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+// ============================================================================
+// PRESS KEY
+// ============================================================================
+
+function pressKey(key, modifiers = {}) {
+  try {
+    const target = document.activeElement || document.body;
+
+    const eventOptions = {
+      bubbles: true,
+      cancelable: true,
+      key: key,
+      code: getKeyCode(key),
+      keyCode: getKeyCodeNumber(key),
+      which: getKeyCodeNumber(key),
+      ctrlKey: modifiers.ctrlKey || false,
+      metaKey: modifiers.metaKey || false,
+      shiftKey: modifiers.shiftKey || false,
+      altKey: modifiers.altKey || false
+    };
+
+    target.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
+    target.dispatchEvent(new KeyboardEvent('keypress', eventOptions));
+    target.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
+
+    return { success: true, key, modifiers, target: target.tagName };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+function getKeyCode(key) {
+  const keyMap = {
+    'Enter': 'Enter', 'Tab': 'Tab', 'Escape': 'Escape',
+    'ArrowUp': 'ArrowUp', 'ArrowDown': 'ArrowDown',
+    'ArrowLeft': 'ArrowLeft', 'ArrowRight': 'ArrowRight',
+    'Backspace': 'Backspace', 'Delete': 'Delete',
+    ' ': 'Space'
+  };
+  return keyMap[key] || `Key${key.toUpperCase()}`;
+}
+
+function getKeyCodeNumber(key) {
+  const keyCodeMap = {
+    'Enter': 13, 'Tab': 9, 'Escape': 27,
+    'ArrowUp': 38, 'ArrowDown': 40,
+    'ArrowLeft': 37, 'ArrowRight': 39,
+    'Backspace': 8, 'Delete': 46, ' ': 32
+  };
+  return keyCodeMap[key] || key.toUpperCase().charCodeAt(0);
+}
+
+// ============================================================================
+// DIALOG HANDLING
+// ============================================================================
+
+// Store dialog history and configuration
+if (!window.__vishDialogs) {
+  window.__vishDialogs = {
+    history: [],
+    pendingResponse: null
+  };
+
+  // Override native dialogs
+  const originalAlert = window.alert;
+  const originalConfirm = window.confirm;
+  const originalPrompt = window.prompt;
+
+  window.alert = function(message) {
+    const dialog = { type: 'alert', message, timestamp: Date.now() };
+    window.__vishDialogs.history.push(dialog);
+
+    const response = window.__vishDialogs.pendingResponse;
+    if (response) {
+      window.__vishDialogs.pendingResponse = null;
+      return;
+    }
+    return originalAlert.call(window, message);
+  };
+
+  window.confirm = function(message) {
+    const dialog = { type: 'confirm', message, timestamp: Date.now() };
+    window.__vishDialogs.history.push(dialog);
+
+    const response = window.__vishDialogs.pendingResponse;
+    if (response !== null) {
+      window.__vishDialogs.pendingResponse = null;
+      dialog.result = response.accept;
+      return response.accept;
+    }
+    const result = originalConfirm.call(window, message);
+    dialog.result = result;
+    return result;
+  };
+
+  window.prompt = function(message, defaultValue) {
+    const dialog = { type: 'prompt', message, defaultValue, timestamp: Date.now() };
+    window.__vishDialogs.history.push(dialog);
+
+    const response = window.__vishDialogs.pendingResponse;
+    if (response !== null) {
+      window.__vishDialogs.pendingResponse = null;
+      dialog.result = response.accept ? (response.promptText || '') : null;
+      return dialog.result;
+    }
+    const result = originalPrompt.call(window, message, defaultValue);
+    dialog.result = result;
+    return result;
+  };
+}
+
+function handleDialog(accept, promptText) {
+  window.__vishDialogs.pendingResponse = { accept, promptText };
+  return { success: true, configured: true, accept, promptText };
+}
+
+function getDialogs() {
+  const dialogs = window.__vishDialogs?.history || [];
+  return {
+    success: true,
+    dialogs: dialogs.slice(-10), // Last 10 dialogs
+    count: dialogs.length
+  };
+}
+
+// ============================================================================
+// ACCESSIBILITY TREE EXTRACTION
+// ============================================================================
+
+// Role mapping based on HTML tag
+const IMPLICIT_ROLES = {
+  a: 'link', button: 'button', h1: 'heading', h2: 'heading', h3: 'heading',
+  h4: 'heading', h5: 'heading', h6: 'heading', img: 'img', input: 'textbox',
+  select: 'combobox', textarea: 'textbox', nav: 'navigation', main: 'main',
+  header: 'banner', footer: 'contentinfo', article: 'article', section: 'region',
+  aside: 'complementary', form: 'form', table: 'table', ul: 'list', ol: 'list',
+  li: 'listitem', dialog: 'dialog', progress: 'progressbar', meter: 'meter'
+};
+
+const INPUT_TYPE_ROLES = {
+  checkbox: 'checkbox', radio: 'radio', range: 'slider', button: 'button',
+  submit: 'button', reset: 'button', search: 'searchbox', email: 'textbox',
+  tel: 'textbox', url: 'textbox', number: 'spinbutton'
+};
+
+function computeRole(element) {
+  // Explicit role takes precedence
+  const explicit = element.getAttribute('role');
+  if (explicit) return explicit;
+
+  const tag = element.tagName.toLowerCase();
+
+  // Special handling for inputs
+  if (tag === 'input') {
+    const type = element.getAttribute('type') || 'text';
+    return INPUT_TYPE_ROLES[type] || 'textbox';
+  }
+
+  return IMPLICIT_ROLES[tag] || null;
+}
+
+function computeAccessibleName(element) {
+  // aria-label takes precedence
+  const ariaLabel = element.getAttribute('aria-label');
+  if (ariaLabel) return ariaLabel.trim();
+
+  // aria-labelledby
+  const labelledBy = element.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const names = labelledBy.split(/\s+/)
+      .map(id => document.getElementById(id)?.textContent?.trim())
+      .filter(Boolean);
+    if (names.length) return names.join(' ');
+  }
+
+  // For inputs, check associated label
+  if (element.id) {
+    const label = document.querySelector(`label[for="${element.id}"]`);
+    if (label) return label.textContent?.trim() || '';
+  }
+
+  // alt for images
+  if (element.tagName.toLowerCase() === 'img') {
+    return element.getAttribute('alt') || '';
+  }
+
+  // title attribute
+  const title = element.getAttribute('title');
+  if (title) return title.trim();
+
+  // placeholder for inputs
+  if (element.placeholder) return element.placeholder;
+
+  // Text content for simple elements
+  const text = element.textContent?.trim();
+  if (text && text.length <= 100) return text;
+
+  return '';
+}
+
+function isInteractive(element) {
+  const tag = element.tagName.toLowerCase();
+  if (['a', 'button', 'input', 'select', 'textarea'].includes(tag)) return true;
+  if (element.getAttribute('tabindex') !== null) return true;
+  if (element.getAttribute('onclick')) return true;
+  if (element.getAttribute('role')?.match(/button|link|checkbox|radio|textbox|combobox|slider|switch|tab|menuitem/)) return true;
+  return false;
+}
+
+function isHidden(element) {
+  if (element.hidden) return true;
+  if (element.getAttribute('aria-hidden') === 'true') return true;
+  const style = window.getComputedStyle(element);
+  if (style.display === 'none' || style.visibility === 'hidden') return true;
+  return false;
+}
+
+function buildAccessibilityTree() {
+  const refMap = {};
+  let refCounter = 0;
+
+  function processNode(element, depth = 0) {
+    if (isHidden(element)) return null;
+
+    const role = computeRole(element);
+    const name = computeAccessibleName(element);
+    const interactive = isInteractive(element);
+
+    // Skip non-semantic elements without meaningful content
+    if (!role && !name && !interactive && element.children.length === 0) {
+      return null;
+    }
+
+    const node = {};
+
+    // Assign ref for interactive elements
+    if (interactive || role) {
+      const ref = `e${++refCounter}`;
+      node.ref = ref;
+      refMap[ref] = element;
+      element.setAttribute('data-vish-ref', ref);
+    }
+
+    if (role) node.role = role;
+    if (name) node.name = name.substring(0, 100);
+
+    // Add state info
+    if (element.checked !== undefined) node.checked = element.checked;
+    if (element.selected) node.selected = true;
+    if (element.disabled) node.disabled = true;
+    if (element.getAttribute('aria-expanded')) node.expanded = element.getAttribute('aria-expanded') === 'true';
+    if (element.value && element.tagName.match(/INPUT|TEXTAREA|SELECT/i)) {
+      node.value = String(element.value).substring(0, 50);
+    }
+
+    // Process children
+    const children = [];
+    for (const child of element.children) {
+      const childNode = processNode(child, depth + 1);
+      if (childNode) children.push(childNode);
+    }
+
+    if (children.length > 0) {
+      node.children = children;
+    }
+
+    return node;
+  }
+
+  const tree = processNode(document.body);
+
+  // Store refMap globally for lookups
+  window.__vishRefMap = refMap;
+
+  return tree;
+}
+
+function serializeForLLM(tree, indent = 0) {
+  if (!tree) return '';
+
+  const pad = '  '.repeat(indent);
+  let lines = [];
+
+  let desc = '';
+  if (tree.ref) desc += `[${tree.ref}] `;
+  if (tree.role) desc += tree.role;
+  if (tree.name) desc += ` "${tree.name}"`;
+  if (tree.checked !== undefined) desc += tree.checked ? ' (checked)' : ' (unchecked)';
+  if (tree.disabled) desc += ' (disabled)';
+  if (tree.expanded !== undefined) desc += tree.expanded ? ' (expanded)' : ' (collapsed)';
+  if (tree.value) desc += ` value="${tree.value}"`;
+
+  if (desc.trim()) {
+    lines.push(pad + desc.trim());
+  }
+
+  if (tree.children) {
+    for (const child of tree.children) {
+      lines.push(serializeForLLM(child, indent + 1));
+    }
+  }
+
+  return lines.filter(Boolean).join('\n');
+}
+
+function extractAccessibilityTree() {
+  try {
+    const tree = buildAccessibilityTree();
+    const serialized = serializeForLLM(tree);
+
+    return {
+      success: true,
+      mode: 'a11y',
+      content: serialized,
+      refCount: Object.keys(window.__vishRefMap || {}).length
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 }
 

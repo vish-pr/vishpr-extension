@@ -30,12 +30,15 @@ class ChromeAPI {
   constructor() {
     this.tabs = new Map();
     this.tabErrors = new Map(); // Store network errors per tab
+    this.networkRequests = new Map(); // Store network requests per tab
+    this.dialogs = new Map(); // Store dialog history per tab
     this._lastActivatedTabId = null; // Track last tab activated by extension (for script execution)
     this._pendingNavigation = new Map(); // Map<tabId, 'back' | 'forward'> - tracks navigation intent
     this._readyPromise = null;
     this._initTabListeners();
     this._initErrorListener();
     this._initNavListeners();
+    this._initNetworkTracking();
   }
 
   async _persistState() {
@@ -410,19 +413,25 @@ class ChromeAPI {
     this._ensureTab(tabId, url);
     const content = await this._executeContentScript(tabId, ContentAction.EXTRACT_CONTENT);
     if (!content || typeof content !== 'object') throw new Error('Failed to extract valid content from page');
+
+    // Log content mode and sizes
+    console.log(`[extractContent] ${url} | mode=${content.contentMode} | raw=${content.rawHtmlSize} cleaned=${content.byteSize} | domStable=${content.domStable} waitMs=${content.domWaitMs}`);
+
     return {
       url,
       title: content.title || 'N/A',
-      links: normalizeElements(content.links),
-      buttons: normalizeElements(content.buttons),
-      inputs: normalizeElements(content.inputs),
-      selects: normalizeElements(content.selects),
-      textareas: normalizeElements(content.textareas),
       content: content.content || '',
       contentMode: content.contentMode || 'text',
       byteSize: content.byteSize || 0,
       rawHtmlSize: content.rawHtmlSize || 0,
-      debugLog: content.debugLog || null
+      debugLog: content.debugLog || null,
+      domStable: content.domStable,
+      domWaitMs: content.domWaitMs,
+      links: normalizeElements(content.links),
+      buttons: normalizeElements(content.buttons),
+      inputs: normalizeElements(content.inputs),
+      selects: normalizeElements(content.selects),
+      textareas: normalizeElements(content.textareas)
     };
   }
 
@@ -574,38 +583,142 @@ class ChromeAPI {
     }));
   }
 
-  async waitForLoad(tabId, timeoutMs = 10000) {
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeoutMs) {
-      try {
-        const result = await this._executeScript(tabId, () => ({
-          loaded: document.readyState === 'complete',
-          ready_state: document.readyState
-        }));
-        if (result.loaded) return result;
-      } catch {
-        // Tab might be navigating, wait and retry
-      }
-      await new Promise(r => setTimeout(r, 200));
-    }
-    return { loaded: false, ready_state: 'timeout', error: 'Timeout waiting for page load' };
+  // --- New Actions ---
+
+  async hoverElement(tabId, elementId) {
+    return this._executeContentScript(tabId, ContentAction.HOVER_ELEMENT, { elementId });
   }
 
-  async waitForElement(tabId, elementId, timeoutMs = 5000) {
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeoutMs) {
-      const result = await this._executeScript(tabId, (elementId) => {
-        const element = /** @type {HTMLElement | null} */ (document.querySelector(`[data-vish-id="${elementId}"]`));
-        return {
-          found: !!element,
-          elementId,
-          visible: element ? (element.offsetParent !== null) : false
-        };
-      }, [elementId]);
-      if (result.found) return result;
-      await new Promise(r => setTimeout(r, 200));
+  async pressKey(tabId, key, modifiers = {}) {
+    return this._executeContentScript(tabId, ContentAction.PRESS_KEY, { key, modifiers });
+  }
+
+  async handleDialog(tabId, accept, promptText) {
+    return this._executeContentScript(tabId, ContentAction.HANDLE_DIALOG, { accept, promptText });
+  }
+
+  async getDialogs(tabId) {
+    return this._executeContentScript(tabId, ContentAction.GET_DIALOGS);
+  }
+
+  async extractAccessibilityTree(tabId) {
+    return this._executeContentScript(tabId, ContentAction.EXTRACT_ACCESSIBILITY_TREE);
+  }
+
+  // --- Network Tracking ---
+
+  _initNetworkTracking() {
+    // Track network requests per tab
+    chrome.webRequest.onBeforeRequest.addListener(
+      (details) => {
+        if (details.tabId < 0) return;
+
+        const requests = this.networkRequests.get(details.tabId) || [];
+        requests.push({
+          requestId: details.requestId,
+          url: details.url,
+          method: details.method,
+          type: details.type,
+          timestamp: details.timeStamp,
+          status: 'pending'
+        });
+
+        // Keep last 100 requests per tab
+        if (requests.length > 100) requests.shift();
+        this.networkRequests.set(details.tabId, requests);
+      },
+      { urls: ['<all_urls>'] }
+    );
+
+    chrome.webRequest.onCompleted.addListener(
+      (details) => {
+        if (details.tabId < 0) return;
+
+        const requests = this.networkRequests.get(details.tabId) || [];
+        const request = requests.find(r => r.requestId === details.requestId);
+        if (request) {
+          request.status = 'completed';
+          request.statusCode = details.statusCode;
+          request.responseHeaders = details.responseHeaders?.slice(0, 10); // First 10 headers
+        }
+      },
+      { urls: ['<all_urls>'] },
+      ['responseHeaders']
+    );
+
+    chrome.webRequest.onErrorOccurred.addListener(
+      (details) => {
+        if (details.tabId < 0) return;
+
+        const requests = this.networkRequests.get(details.tabId) || [];
+        const request = requests.find(r => r.requestId === details.requestId);
+        if (request) {
+          request.status = 'error';
+          request.error = details.error;
+        }
+      },
+      { urls: ['<all_urls>'] }
+    );
+
+    // Clear requests when tab is closed
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      this.networkRequests.delete(tabId);
+    });
+  }
+
+  enableNetworkTracking(tabId) {
+    if (!this.networkRequests.has(tabId)) {
+      this.networkRequests.set(tabId, []);
     }
-    return { found: false, elementId, error: 'Timeout waiting for element' };
+    return { enabled: true, tabId };
+  }
+
+  disableNetworkTracking(tabId) {
+    this.networkRequests.delete(tabId);
+    return { disabled: true, tabId };
+  }
+
+  getNetworkRequests(tabId, filter = {}) {
+    const requests = this.networkRequests.get(tabId) || [];
+    let filtered = requests;
+
+    if (filter.type) {
+      const types = Array.isArray(filter.type) ? filter.type : [filter.type];
+      filtered = filtered.filter(r => types.includes(r.type));
+    }
+
+    if (filter.status) {
+      filtered = filtered.filter(r => r.status === filter.status);
+    }
+
+    if (filter.urlPattern) {
+      const regex = new RegExp(filter.urlPattern);
+      filtered = filtered.filter(r => regex.test(r.url));
+    }
+
+    if (filter.statusCode) {
+      if (typeof filter.statusCode === 'number') {
+        filtered = filtered.filter(r => r.statusCode === filter.statusCode);
+      } else if (filter.statusCode.min || filter.statusCode.max) {
+        filtered = filtered.filter(r => {
+          if (!r.statusCode) return false;
+          if (filter.statusCode.min && r.statusCode < filter.statusCode.min) return false;
+          if (filter.statusCode.max && r.statusCode > filter.statusCode.max) return false;
+          return true;
+        });
+      }
+    }
+
+    return {
+      requests: filtered.slice(-50), // Last 50 matching
+      total: requests.length,
+      filtered: filtered.length
+    };
+  }
+
+  clearNetworkRequests(tabId) {
+    this.networkRequests.set(tabId, []);
+    return { cleared: true, tabId };
   }
 }
 
