@@ -7,7 +7,7 @@ import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
 import { LLM_ACTION } from './llm-action.js';
 import { ROUTER_ACTION } from './router-action.js';
 import { knowledgeBaseActions } from './knowledge-base-action.js';
-import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
+import { REQUEST_INPUT_ACTION } from './clarification-actions.js';
 import { TRACE_ANALYZER_ACTION } from './trace-analyzer-action.js';
 import { CONTEXT_SELECTOR_ACTION } from './context-selector-action.js';
 import logger from '../logger.js';
@@ -26,7 +26,7 @@ const allActions: Action[] = [
   BROWSER_ACTION_ROUTER,
   TRACE_ANALYZER_ACTION,
   ...knowledgeBaseActions,
-  USER_CLARIFICATION_ACTION,
+  REQUEST_INPUT_ACTION,
   CONTEXT_SELECTOR_ACTION
 ];
 

@@ -16,6 +16,8 @@ const ICONS = {
   dot: '<svg class="size-2.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>',
   maximize: '<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>',
   close: '<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  copy: '<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
+  copied: '<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
 };
 
 // Node type icons for trace rendering
@@ -110,6 +112,8 @@ export async function initDebug() {
 
   // Delegated timeline handlers
   elements.debugTimeline.addEventListener('click', (e) => {
+    const copyBtn = e.target.closest('.content-copy-btn');
+    if (copyBtn?.dataset.copyId) { e.stopPropagation(); return handleCopy(copyBtn); }
     const maxBtn = e.target.closest('.content-maximize-btn');
     if (maxBtn?.dataset.maximizeId) { e.stopPropagation(); return handleMaximize(maxBtn); }
     const toolSum = e.target.closest('.tool-call-summary');
@@ -120,6 +124,8 @@ export async function initDebug() {
 
   // Delegated state tab handlers
   elements.debugStateContent.addEventListener('click', (e) => {
+    const copyBtn = e.target.closest('.content-copy-btn');
+    if (copyBtn?.dataset.copyId) { e.stopPropagation(); return handleCopy(copyBtn); }
     const maxBtn = e.target.closest('.content-maximize-btn');
     if (maxBtn?.dataset.maximizeId) { e.stopPropagation(); return handleMaximize(maxBtn); }
 
@@ -264,11 +270,7 @@ function renderNode(node, depth = 0) {
       const remaining = remainingEntries.length > 0 ? Object.fromEntries(remainingEntries) : null;
 
       if (reasoning) {
-        if (reasoning.length > MAXIMIZE_THRESHOLD) {
-          details.push(detailRow('REASONING', formatLargeContent(reasoning, 'REASONING')));
-        } else {
-          details.push(detailRow('REASONING', `<pre class="llm-reasoning">${escapeHtml(reasoning)}</pre>`));
-        }
+        details.push(detailRow('REASONING', formatLargeContent(reasoning, 'REASONING', 'llm-reasoning')));
       }
       if (toolCalls && toolCalls.length > 0) {
         details.push(detailRow('TOOL_CALLS', `<div class="tool-calls-container">${renderToolCalls(toolCalls)}</div>`));
@@ -318,17 +320,19 @@ function renderNode(node, depth = 0) {
   `;
 }
 
-// Format content with maximize button if it exceeds threshold
-function formatLargeContent(content, label) {
-  if (content.length <= MAXIMIZE_THRESHOLD) {
-    return `<pre>${escapeHtml(content)}</pre>`;
-  }
+// Format content with copy button (always) and maximize button (if exceeds threshold)
+function formatLargeContent(content, label, preClass = '') {
   const id = `max-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const showMaximize = content.length > MAXIMIZE_THRESHOLD;
+  const maximizeBtn = showMaximize
+    ? `<button class="content-maximize-btn" data-maximize-id="${id}" data-label="${escapeHtml(label)}" title="Expand (${formatSize(content.length)} chars)">${ICONS.maximize}</button>`
+    : '';
+  const copyBtn = `<button class="content-copy-btn" data-copy-id="${id}" title="Copy to clipboard">${ICONS.copy}</button>`;
+  const preClassAttr = preClass ? ` class="${preClass}"` : '';
+
   return `<div class="relative">
-    <button class="content-maximize-btn" data-maximize-id="${id}" data-label="${escapeHtml(label)}" title="Expand (${formatSize(content.length)} chars)">
-      ${ICONS.maximize}
-    </button>
-    <pre>${escapeHtml(content)}</pre>
+    <div class="content-action-btns">${copyBtn}${maximizeBtn}</div>
+    <pre${preClassAttr}>${escapeHtml(content)}</pre>
     <template id="${id}">${escapeHtml(content)}</template>
   </div>`;
 }
@@ -651,6 +655,9 @@ function showMaximizer(content, label) {
         <span class="maximizer-header-icon">◈</span>
         <span class="maximizer-header-label">${escapeHtml(label)}</span>
         <span class="maximizer-header-size">${formatSize(content.length)} chars</span>
+        <button class="maximizer-copy-btn btn btn-ghost btn-sm btn-square" title="Copy to clipboard">
+          ${ICONS.copy}
+        </button>
         <button class="maximizer-close-btn" title="Close (Esc)">
           ${ICONS.close}
         </button>
@@ -666,6 +673,22 @@ function showMaximizer(content, label) {
 
   // Set content via textContent to avoid XSS
   overlay.querySelector('.maximizer-content pre').textContent = content;
+
+  // Copy button handler
+  const copyBtn = /** @type {HTMLButtonElement} */ (overlay.querySelector('.maximizer-copy-btn'));
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      copyBtn.innerHTML = ICONS.copied;
+      copyBtn.classList.add('text-success');
+      setTimeout(() => {
+        copyBtn.innerHTML = ICONS.copy;
+        copyBtn.classList.remove('text-success');
+      }, 1500);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  });
 
   // Close handlers
   const close = () => {
@@ -706,6 +729,27 @@ function handleMaximize(btn) {
   const decoded = document.createElement('textarea');
   decoded.innerHTML = template.innerHTML;
   showMaximizer(decoded.value, btn.dataset.label);
+}
+
+// Handle copy button click - copy content to clipboard
+async function handleCopy(btn) {
+  const template = document.getElementById(btn.dataset.copyId);
+  if (!template) return;
+  const decoded = document.createElement('textarea');
+  decoded.innerHTML = template.innerHTML;
+
+  try {
+    await navigator.clipboard.writeText(decoded.value);
+    // Show success feedback
+    btn.innerHTML = ICONS.copied;
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.innerHTML = ICONS.copy;
+      btn.classList.remove('copied');
+    }, 1500);
+  } catch (err) {
+    console.error('Failed to copy:', err);
+  }
 }
 
 // ==========================================================================
@@ -784,10 +828,11 @@ function renderStateBlock(key, label, value, type) {
         ` : ''}
       </div>
       <div class="state-block-content">
-        ${showMaximize ? `
-          <button class="content-maximize-btn" data-maximize-id="${id}" data-label="${escapeHtml(label)}" title="Expand">
-            ${ICONS.maximize}
-          </button>
+        ${!isEmpty ? `
+          <div class="content-action-btns">
+            <button class="content-copy-btn" data-copy-id="${id}" title="Copy to clipboard">${ICONS.copy}</button>
+            ${showMaximize ? `<button class="content-maximize-btn" data-maximize-id="${id}" data-label="${escapeHtml(label)}" title="Expand">${ICONS.maximize}</button>` : ''}
+          </div>
           <template id="${id}">${displayValue}</template>
         ` : ''}
         <pre class="state-block-value">${displayValue}</pre>

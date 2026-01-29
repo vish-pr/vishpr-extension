@@ -229,9 +229,11 @@ body { @apply flex flex-col; }
 .clarification-hint { @apply px-4 pb-3; }
 .clarification-paused { @apply absolute -top-3 left-1/2 -translate-x-1/2 z-10; }
 
-/* Content Maximizer */
-.content-maximize-btn { @apply absolute top-1.5 right-1.5 w-6 h-6 rounded flex items-center justify-center opacity-0 transition-all cursor-pointer z-10 bg-base-300 border border-base-content/15 text-base-content/50 hover:bg-base-content/15 hover:text-base-content/90 hover:scale-110 active:scale-95; }
-.trace-detail-value:hover .content-maximize-btn, .tool-call-inline:hover .content-maximize-btn { @apply opacity-100; }
+/* Content Action Buttons (Copy & Maximize) */
+.content-action-btns { @apply absolute top-1.5 right-1.5 flex gap-1 opacity-0 transition-opacity z-10; }
+.trace-detail-value:hover .content-action-btns, .tool-call-inline:hover .content-action-btns, .state-block-content:hover .content-action-btns { @apply opacity-100; }
+.content-copy-btn, .content-maximize-btn { @apply w-6 h-6 rounded flex items-center justify-center transition-all cursor-pointer bg-base-300 border border-base-content/15 text-base-content/50 hover:bg-base-content/15 hover:text-base-content/90 hover:scale-110 active:scale-95; }
+.content-copy-btn.copied { @apply bg-success/20 border-success/30 text-success; }
 .maximizer-overlay { @apply fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm; animation: fadeIn 0.2s ease; }
 .maximizer-overlay.closing { animation: fadeIn 0.15s ease reverse forwards; }
 .maximizer-container { @apply relative flex flex-col w-full h-full max-w-5xl max-h-[90vh] rounded-lg overflow-hidden bg-base-100 border border-base-content/15 shadow-2xl; animation: fadeSlideIn 0.25s ease; }
@@ -240,6 +242,7 @@ body { @apply flex flex-col; }
 .maximizer-header-icon { @apply text-base text-primary; }
 .maximizer-header-label { @apply text-xs font-bold uppercase tracking-[0.2em] flex-1 text-base-content/40 font-mono; }
 .maximizer-header-size { @apply text-xs font-mono px-2 py-0.5 rounded bg-base-content/10 text-base-content/50; }
+.maximizer-copy-btn { @apply text-base-content/50 hover:text-base-content; }
 .maximizer-close-btn { @apply btn btn-ghost btn-sm btn-square; }
 .maximizer-content { @apply flex-1 overflow-auto p-4 bg-base-100; }
 .maximizer-content pre { @apply whitespace-pre-wrap break-words m-0 leading-relaxed font-mono text-xs text-base-content/85; }

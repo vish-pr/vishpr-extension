@@ -88,11 +88,20 @@ const RESPONSE_OUTPUT_SCHEMA: JSONSchema = {
 export const LLM_ACTION: Action = {
   name: 'LLM',
   description: 'Calls a large language model for general knowledge, analysis, reasoning, and planning. Best for: answering knowledge questions, code generation, problem-solving, strategy development, and tasks requiring general world understanding. Limitations: No access to live/current information, web browsing, or file system.',
-  examples: [
-    'What is the capital of France?',
-    'Explain how async/await works',
-    'Help me plan a project structure'
-  ],
+  tool_doc: {
+    use_when: [
+      'Answering general knowledge questions',
+      'Performing reasoning, planning, or analysis',
+      'Generating code or explanations',
+      'No browser interaction required'
+    ],
+    never: ['Use for live web data or page interaction'],
+    examples: [
+      'What is the capital of France?',
+      'Explain how async/await works',
+      'Help me plan a project structure'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {

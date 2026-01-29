@@ -12,6 +12,14 @@ export interface JSONSchema {
   description?: string;
 }
 
+// Tool documentation for TOOLS and EXAMPLES sections
+export interface ToolDoc {
+  use_when: string[];     // Criteria for when to use
+  must?: string[];        // Required behaviors
+  never?: string[];       // Prohibited behaviors
+  examples?: string[];    // Example queries that should use this tool
+}
+
 // Message types for conversation
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -96,7 +104,7 @@ export type Step = FunctionStep | LLMStep | ActionStep;
 export interface Action {
   name: string;
   description: string;
-  examples?: string[];
+  tool_doc?: ToolDoc;     // All tool documentation in one place
   input_schema: JSONSchema;
   steps: Step[];
   post_steps?: Step[];  // Fire-and-forget steps run after result returned (root actions only)

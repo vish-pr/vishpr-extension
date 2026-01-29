@@ -20,7 +20,7 @@ import {
   setLastActivatedTab
 } from '../content-bridge.js';
 import { FINAL_RESPONSE_ACTION } from './final-response-action.js';
-import { USER_CLARIFICATION_ACTION } from './clarification-actions.js';
+import { REQUEST_INPUT_ACTION } from './clarification-actions.js';
 import { getActionStatsCounter } from '../debug/time-bucket-counter.js';
 
 // --- Navigation Helpers ---
@@ -135,10 +135,19 @@ function compressPreviousReads(parent_messages: Message[] | undefined): Message[
 export const READ_PAGE: Action = {
   name: 'READ_PAGE',
   description: 'Extract page content as accessibility tree with interactive element refs. Use when you need to see what is on the page or find elements to interact with. Returns refs like [e1], [e2] that are required for CLICK_ELEMENT, FILL_FORM, and other interaction actions.',
-  examples: [
-    'What is on this page?',
-    'Show me the page content'
-  ],
+  tool_doc: {
+    use_when: [
+      'Need to see page content',
+      'Need element refs for interaction',
+      'UI changed and need fresh refs'
+    ],
+    must: ['Use before element interaction if no refs available'],
+    never: ['Use after navigation actions (they auto-return content)'],
+    examples: [
+      'What is on this page?',
+      'Show me the page content'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -191,10 +200,15 @@ export const READ_PAGE: Action = {
 export const CLICK_ELEMENT: Action = {
   name: 'CLICK_ELEMENT',
   description: 'Click a button, link, or interactive element using its ref from READ_PAGE. Supports modifiers: newTab (open in background tab), newTabActive (open in foreground tab), download (download instead of navigate). Requires ref from READ_PAGE results (e.g., "e1", "e34"). When a click causes navigation, automatically extracts page content as accessibility tree (disable with autoReadOnNavigate=false).',
-  examples: [
-    'Click the login button',
-    'Open that link in a new tab'
-  ],
+  tool_doc: {
+    use_when: ['Clicking buttons, links, or interactive elements'],
+    must: ['Have element ref from READ_PAGE first'],
+    never: ['Invent or guess ref values'],
+    examples: [
+      'Click the login button',
+      'Open that link in a new tab'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -252,10 +266,13 @@ export const CLICK_ELEMENT: Action = {
 export const SWITCH_TAB: Action = {
   name: 'SWITCH_TAB',
   description: 'Switch focus to an existing browser tab without changing its URL.',
-  examples: [
-    'Switch to tab 123',
-    'Focus the other tab'
-  ],
+  tool_doc: {
+    use_when: ['Switching focus to another browser tab'],
+    examples: [
+      'Switch to tab 123',
+      'Focus the other tab'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -282,10 +299,14 @@ export const SWITCH_TAB: Action = {
 export const CHANGE_TAB_URL: Action = {
   name: 'CHANGE_TAB_URL',
   description: 'Change the URL of an existing tab and automatically extract page content as accessibility tree. Use when you want to navigate within the same tab. Returns page content directly (disable with autoRead=false).',
-  examples: [
-    'Go to https://google.com in this tab',
-    'Navigate to https://github.com'
-  ],
+  tool_doc: {
+    use_when: ['Navigating to a URL in the current tab'],
+    must: ['Provide valid URL'],
+    examples: [
+      'Go to https://google.com in this tab',
+      'Navigate to https://github.com'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -334,10 +355,13 @@ export const CHANGE_TAB_URL: Action = {
 export const OPEN_URL_IN_NEW_TAB: Action = {
   name: 'OPEN_URL_IN_NEW_TAB',
   description: 'Open a URL in a new browser tab and automatically extract page content as accessibility tree. Returns page content directly (disable with autoRead=false).',
-  examples: [
-    'Open https://google.com in a new tab',
-    'Open this link in new tab'
-  ],
+  tool_doc: {
+    use_when: ['Opening a URL in a new browser tab'],
+    examples: [
+      'Open https://google.com in a new tab',
+      'Open this link in new tab'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -386,10 +410,13 @@ export const OPEN_URL_IN_NEW_TAB: Action = {
 export const GET_PAGE_STATE: Action = {
   name: 'GET_PAGE_STATE',
   description: 'Get current page state including scroll position, viewport dimensions, total page size, and load status.',
-  examples: [
-    'Is the page fully loaded?',
-    'Where am I on the page?'
-  ],
+  tool_doc: {
+    use_when: ['Getting page scroll position, dimensions, or load status'],
+    examples: [
+      'Is the page fully loaded?',
+      'Where am I on the page?'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -416,10 +443,15 @@ export const GET_PAGE_STATE: Action = {
 export const FILL_FORM: Action = {
   name: 'FILL_FORM',
   description: 'Fill one or more form input fields with values. Requires form_fields array with [{ref, value}] where ref comes from READ_PAGE (e.g., "e1", "e34").',
-  examples: [
-    'Enter my email address',
-    'Fill in the search box with "test"'
-  ],
+  tool_doc: {
+    use_when: ['Filling text inputs, search boxes, form fields'],
+    must: ['Have element refs from READ_PAGE'],
+    never: ['Guess ref values'],
+    examples: [
+      'Enter my email address',
+      'Fill in the search box with "test"'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -465,10 +497,14 @@ export const FILL_FORM: Action = {
 export const SELECT_OPTION: Action = {
   name: 'SELECT_OPTION',
   description: 'Select an option from a dropdown/select element. Requires ref of the select element and the value or text to select.',
-  examples: [
-    'Select "United States" from the country dropdown',
-    'Choose the medium size option'
-  ],
+  tool_doc: {
+    use_when: ['Selecting an option from a dropdown'],
+    must: ['Have ref from READ_PAGE'],
+    examples: [
+      'Select "United States" from the country dropdown',
+      'Choose the medium size option'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -497,10 +533,14 @@ export const SELECT_OPTION: Action = {
 export const CHECK_CHECKBOX: Action = {
   name: 'CHECK_CHECKBOX',
   description: 'Check or uncheck a checkbox input. Requires ref from READ_PAGE and checked (true to check, false to uncheck).',
-  examples: [
-    'Check the terms and conditions box',
-    'Uncheck the newsletter subscription'
-  ],
+  tool_doc: {
+    use_when: ['Checking or unchecking a checkbox'],
+    must: ['Have ref from READ_PAGE'],
+    examples: [
+      'Check the terms and conditions box',
+      'Uncheck the newsletter subscription'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -529,10 +569,14 @@ export const CHECK_CHECKBOX: Action = {
 export const SUBMIT_FORM: Action = {
   name: 'SUBMIT_FORM',
   description: 'Submit a form by clicking a submit button or triggering form submission. When submission causes navigation, automatically extracts page content as accessibility tree (disable with autoReadOnNavigate=false).',
-  examples: [
-    'Submit the form',
-    'Press the submit button'
-  ],
+  tool_doc: {
+    use_when: ['Submitting a form'],
+    must: ['Have ref from READ_PAGE'],
+    examples: [
+      'Submit the form',
+      'Press the submit button'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -598,10 +642,13 @@ export const SUBMIT_FORM: Action = {
 export const SCROLL_TO: Action = {
   name: 'SCROLL_TO',
   description: 'Scroll the page in a direction. Requires direction: "up", "down", "top", or "bottom".',
-  examples: [
-    'Scroll down',
-    'Go to the top of the page'
-  ],
+  tool_doc: {
+    use_when: ['Scrolling the page up, down, or to edges'],
+    examples: [
+      'Scroll down',
+      'Go to the top of the page'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -636,11 +683,14 @@ export const SCROLL_TO: Action = {
 export const NAVIGATE_HISTORY: Action = {
   name: 'NAVIGATE_HISTORY',
   description: 'Navigate back or forward in browser history. Response includes canGoBack and canGoForward. Automatically extracts page content as accessibility tree (disable with autoRead=false).',
-  examples: [
-    'Go back',
-    'Go forward',
-    'Return to the previous page'
-  ],
+  tool_doc: {
+    use_when: ['Going back or forward in browser history'],
+    examples: [
+      'Go back',
+      'Go forward',
+      'Return to the previous page'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -689,10 +739,14 @@ export const NAVIGATE_HISTORY: Action = {
 export const HOVER_ELEMENT: Action = {
   name: 'HOVER_ELEMENT',
   description: 'Hover over an element to trigger hover effects like dropdowns, tooltips, or menus. Requires ref from READ_PAGE.',
-  examples: [
-    'Hover over the dropdown menu',
-    'Show the tooltip by hovering'
-  ],
+  tool_doc: {
+    use_when: ['Triggering hover effects like dropdowns or tooltips'],
+    must: ['Have ref from READ_PAGE'],
+    examples: [
+      'Hover over the dropdown menu',
+      'Show the tooltip by hovering'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -720,11 +774,14 @@ export const HOVER_ELEMENT: Action = {
 export const PRESS_KEY: Action = {
   name: 'PRESS_KEY',
   description: 'Press a keyboard key with optional modifiers. Useful for Enter to submit, Escape to close, arrow keys for navigation.',
-  examples: [
-    'Press Enter to submit',
-    'Press Escape to close the dialog',
-    'Press Tab to move to next field'
-  ],
+  tool_doc: {
+    use_when: ['Pressing keyboard keys (Enter, Escape, Tab, arrows)'],
+    examples: [
+      'Press Enter to submit',
+      'Press Escape to close the dialog',
+      'Press Tab to move to next field'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -761,11 +818,15 @@ export const PRESS_KEY: Action = {
 export const HANDLE_DIALOG: Action = {
   name: 'HANDLE_DIALOG',
   description: 'Configure how to handle the next browser dialog (alert, confirm, prompt). Must be called BEFORE the dialog appears.',
-  examples: [
-    'Accept the next confirmation dialog',
-    'Dismiss the next alert',
-    'Enter text in the next prompt'
-  ],
+  tool_doc: {
+    use_when: ['Accepting or dismissing browser dialogs (alert, confirm, prompt)'],
+    must: ['Call BEFORE the dialog appears'],
+    examples: [
+      'Accept the next confirmation dialog',
+      'Dismiss the next alert',
+      'Enter text in the next prompt'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -794,10 +855,13 @@ export const HANDLE_DIALOG: Action = {
 export const GET_DIALOGS: Action = {
   name: 'GET_DIALOGS',
   description: 'Get the history of dialogs that have appeared on the page (alerts, confirms, prompts).',
-  examples: [
-    'Show me the dialog history',
-    'What dialogs have appeared?'
-  ],
+  tool_doc: {
+    use_when: ['Getting history of dialogs that appeared'],
+    examples: [
+      'Show me the dialog history',
+      'What dialogs have appeared?'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -846,11 +910,21 @@ export const browserActions: Action[] = [
 export const BROWSER_ACTION_ROUTER: Action = {
   name: 'BROWSER_ACTION',
   description: 'Interact with web pages: read content, click elements, fill forms, navigate, scroll',
-  examples: [
-    'What is this page?',
-    'Click the login button',
-    'Fill in my email'
-  ],
+  tool_doc: {
+    use_when: [
+      'Navigating to URLs',
+      'Reading page content',
+      'Clicking, typing, scrolling, or interacting with web pages',
+      'Any task requiring live web data'
+    ],
+    must: ['Use for any web interaction'],
+    never: ['Use for general knowledge questions'],
+    examples: [
+      'What is this page?',
+      'Click the login button',
+      'Fill in my email'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {
@@ -875,7 +949,7 @@ CORE PRINCIPLES
 • You NEVER invent state, IDs, tabs, URLs, or outcomes
 • You NEVER output internal reasoning, justification, or metadata
 • You ONLY output tool calls or FINAL_RESPONSE is last tool call to return output to user.
-• If the goal is ambiguous, request clarification via USER_CLARIFICATION_ACTION.
+• If the goal is ambiguous, request clarification via REQUEST_INPUT_ACTION.
 
 ────────────────────────────────────────
 AUTO-READ BEHAVIOR (IMPORTANT)
@@ -921,8 +995,12 @@ Refs are strings like "e1", "e34" - NEVER guess or invent refs.
 ────────────────────────────────────────
 TOOLS
 ────────────────────────────────────────
+{{{tools_section}}}
 
-{{{decisionGuide}}}
+────────────────────────────────────────
+EXAMPLES
+────────────────────────────────────────
+{{{examples_section}}}
 
 ────────────────────────────────────────
 WORKFLOW RULES
@@ -947,20 +1025,6 @@ ERROR HANDLING
 • If element not found → READ_PAGE to get fresh refs
 • If same error occurs twice → FINAL_RESPONSE with error
 • If interaction fails → try an alternative valid approach
-
-────────────────────────────────────────
-INTENT MAPPING
-────────────────────────────────────────
-"What is on this page?" → READ_PAGE
-"Go to URL" → CHANGE_TAB_URL (returns content)
-"Open URL in new tab" → OPEN_URL_IN_NEW_TAB (returns content)
-"Click the button" → CLICK_ELEMENT (may return new page content)
-"Fill form and submit" → FILL_FORM → SUBMIT_FORM (may return new page content)
-"Go back/forward" → NAVIGATE_HISTORY (returns content)
-"Scroll down" → SCROLL_TO → READ_PAGE (to see new content)
-"Press Enter" → PRESS_KEY
-"Hover menu" → HOVER_ELEMENT → READ_PAGE (to see dropdown)
-"Accept dialog" → HANDLE_DIALOG
 
 ────────────────────────────────────────
 REMINDER
@@ -993,7 +1057,7 @@ Decision:
       intelligence: 'HIGH',
       tool_choice: {
         available_actions: [
-          USER_CLARIFICATION_ACTION.name,
+          REQUEST_INPUT_ACTION.name,
           READ_PAGE.name,
           CLICK_ELEMENT.name,
           FILL_FORM.name,

@@ -20,13 +20,51 @@ async function renderWithContext(template, baseContext) {
 }
 
 /**
- * Build decision guide from action examples
+ * Build TOOLS section from action definitions
  */
-function buildDecisionGuide(availableActions) {
-  return availableActions.flatMap(name => {
+function buildToolsSection(availableActions) {
+  return availableActions.map(name => {
     const action = actionsRegistry[name];
-    return (action?.examples || []).map(ex => `- "${ex}" → ${name}`);
-  }).join('\n');
+    if (!action?.tool_doc) return '';
+
+    const lines = [`## ${name}`];
+    const { use_when, must, never } = action.tool_doc;
+
+    if (use_when?.length) {
+      lines.push('Use when:');
+      use_when.forEach(c => lines.push(`- ${c}`));
+    }
+    if (must?.length) {
+      lines.push('MUST:');
+      must.forEach(r => lines.push(`- ${r}`));
+    }
+    if (never?.length) {
+      lines.push('NEVER:');
+      never.forEach(r => lines.push(`- ${r}`));
+    }
+
+    return lines.join('\n');
+  }).filter(Boolean).join('\n\n');
+}
+
+/**
+ * Build shuffled EXAMPLES section
+ */
+function buildExamplesSection(availableActions) {
+  const allExamples = availableActions.flatMap(name => {
+    const action = actionsRegistry[name];
+    return (action?.tool_doc?.examples || []).map(ex => ({ ex, name }));
+  });
+
+  // Fisher-Yates shuffle
+  for (let i = allExamples.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [allExamples[i], allExamples[j]] = [allExamples[j], allExamples[i]];
+  }
+
+  return allExamples.map((item, i) =>
+    `${i + 1}. "${item.ex}" → ${item.name}`
+  ).join('\n');
 }
 
 const TIMEOUT_MS = 20000;
@@ -204,11 +242,14 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
     if (skipped) return { skipped: true };
   }
 
-  // Build decision guide and render templates with fresh context
-  const decisionGuide = tool_choice?.available_actions
-    ? buildDecisionGuide(tool_choice.available_actions)
+  // Build tools and examples sections and render templates with fresh context
+  const toolsSection = tool_choice?.available_actions
+    ? buildToolsSection(tool_choice.available_actions)
     : '';
-  const templateContext = { ...context, decisionGuide };
+  const examplesSection = tool_choice?.available_actions
+    ? buildExamplesSection(tool_choice.available_actions)
+    : '';
+  const templateContext = { ...context, tools_section: toolsSection, examples_section: examplesSection };
   const sysPrompt = await renderWithContext(step.system_prompt, templateContext);
   const userMsg = await renderWithContext(step.message, templateContext);
 
@@ -286,7 +327,7 @@ async function executeLLMStep(step, context, actionUUID, stepIndex, actionName, 
       }
     }
 
-    const continuationMsg = await renderWithContext(step.continuation_message, { ...context, decisionGuide });
+    const continuationMsg = await renderWithContext(step.continuation_message, { ...context, tools_section: toolsSection, examples_section: examplesSection });
     conversation.push({ role: 'user', content: continuationMsg });
   }
 

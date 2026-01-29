@@ -6,6 +6,7 @@ import Mustache from 'mustache';
 import { getBrowserStateBundle } from '../content-bridge.js';
 
 const PREFERENCES_KB_KEY = 'user_preferences_kb';
+const PREVIOUS_CHAT_KEY = 'previous_chat_context';
 
 type ContextFetcher = () => Promise<unknown>;
 
@@ -31,7 +32,28 @@ const contextFetchers: Record<string, ContextFetcher> = {
       minute: '2-digit',
       timeZoneName: 'short'
     })
-  )
+  ),
+
+  previous_chat: async () => {
+    const storage = await chrome.storage.session.get(PREVIOUS_CHAT_KEY);
+    const ctx = storage[PREVIOUS_CHAT_KEY] as {
+      tabAlias: string | null;
+      tabUrl: string;
+      userInput: string;
+      modelResponse: string;
+      timestamp: number;
+    } | undefined;
+    if (!ctx) return null;
+
+    const timeSinceMinutes = Math.round((Date.now() - ctx.timestamp) / 60000);
+    return {
+      tabAlias: ctx.tabAlias,
+      tabUrl: ctx.tabUrl,
+      userInput: ctx.userInput,
+      modelResponse: ctx.modelResponse,
+      timeSinceMinutes
+    };
+  }
 };
 
 /**

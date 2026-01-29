@@ -3,7 +3,11 @@ import { isInitialized } from './modules/llm/index.js';
 import { executeAction, unwrapFinalAnswer } from './modules/executor.js';
 import { getAction } from './modules/actions/index.js';
 import { ROUTER_ACTION } from './modules/actions/router-action.js';
+import { tabManager } from './modules/content-bridge.js';
 import logger from './modules/logger.js';
+
+const PREVIOUS_CHAT_KEY = 'previous_chat_context';
+const MAX_RESPONSE_PREVIEW_LENGTH = 500;
 
 // Track panel open state per window
 const panelOpenState = new Map();
@@ -99,9 +103,31 @@ async function handleUserMessage({ message }) {
 
     logger.info('Execution trace', { traceId, duration });
 
-    return unwrapFinalAnswer(result);
+    const finalAnswer = unwrapFinalAnswer(result);
+
+    // Save context for next chat (fire-and-forget)
+    savePreviousChatContext(message, finalAnswer).catch(() => {});
+
+    return finalAnswer;
   } catch (error) {
     logger.error('Execution failed', { error: error.message });
     throw error;
   }
+}
+
+async function savePreviousChatContext(userInput, modelResponse) {
+  const [[currentTab]] = await Promise.all([
+    chrome.tabs.query({ active: true, currentWindow: true }),
+    tabManager.ready()
+  ]);
+
+  const context = {
+    tabAlias: currentTab?.id ? tabManager.getAlias(currentTab.id) : null,
+    tabUrl: currentTab?.url ?? 'unknown',
+    userInput,
+    modelResponse: modelResponse?.substring(0, MAX_RESPONSE_PREVIEW_LENGTH) ?? '',
+    timestamp: Date.now()
+  };
+
+  await chrome.storage.session.set({ [PREVIOUS_CHAT_KEY]: context });
 }

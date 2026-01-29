@@ -129,16 +129,16 @@ NEVER: Extract sensitive data (finances, health, passwords)
 ## Signal Sources (Priority Order)
 
 ### 1. Explicit Choices (Highest Weight)
-Look for USER_CLARIFICATION results where is_default=false:
+Look for REQUEST_INPUT results where is_default=false:
 - User actively selected this option over alternatives
 - Extract as strong preference
 
 Example trace:
-  USER_CLARIFICATION → { answers: [{ value: "Dark theme", is_default: false }] }
+  REQUEST_INPUT → { answers: [{ value: "Dark theme", is_default: false }] }
 Extract: "User prefers dark theme."
 
 Example trace:
-  USER_CLARIFICATION → { answers: [{ value: "Express shipping", is_default: true }] }
+  REQUEST_INPUT → { answers: [{ value: "Express shipping", is_default: true }] }
 Do NOT extract (auto-selected, not user choice).
 
 ### 2. Browsing Patterns (Medium Weight)
@@ -302,7 +302,7 @@ function extractClarificationSignals(trace: TraceNode): ClarificationSignal[] {
   const signals: ClarificationSignal[] = [];
 
   function traverse(node: TraceNode) {
-    if (node.name === 'USER_CLARIFICATION' && node.result?.answers) {
+    if (node.name === 'REQUEST_INPUT' && node.result?.answers) {
       for (const answer of node.result.answers) {
         if (answer.preference_facts_used && answer.preference_facts_used.length > 0) {
           signals.push({
@@ -567,7 +567,7 @@ No conversation found. Focus on browsing patterns from READ_PAGE actions only.
 {{/skip_preference_extraction}}
 
 For preferences, examine:
-1. USER_CLARIFICATION results - look for is_default:false (explicit choices)
+1. REQUEST_INPUT results - look for is_default:false (explicit choices)
 2. READ_PAGE URLs and summaries - identify browsing patterns
 3. Conversation - communication style signals`,
       intelligence: 'LOW',

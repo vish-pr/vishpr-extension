@@ -123,15 +123,24 @@ Purpose:
 - Format and present the final result to the user
 - Remove internal reasoning and intermediate steps
 - Convert tool outputs into a clean, user-readable response`,
-  examples: [
-    'Give me the final answer',
-    'Provide the result to the user',
-    'Return the completed response',
-    'Deliver the outcome',
-    'The task is complete — show the result',
-    'Same error has occurred twice, so instead of retrying, use FINAL_RESPONSE to finish the task'
-
-  ],
+  tool_doc: {
+    use_when: [
+      'Task objective is fully achieved',
+      'Requested information has been gathered',
+      'Progress is blocked (e.g., login required)',
+      'Same error occurs twice'
+    ],
+    must: ['Use to terminate the task'],
+    never: ['Call before objective is achieved'],
+    examples: [
+      'Give me the final answer',
+      'Provide the result to the user',
+      'Return the completed response',
+      'Deliver the outcome',
+      'The task is complete — show the result',
+      'Same error has occurred twice, so instead of retrying, use FINAL_RESPONSE to finish the task'
+    ]
+  },
   input_schema: {
     type: 'object',
     properties: {

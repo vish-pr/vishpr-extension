@@ -154,7 +154,11 @@ export function buildAccessibilityTree(doc) {
 
   function processNode(element, depth = 0) {
     if (isHiddenA11y(element)) return null;
-    if (depth > 50) return null; // Prevent deep recursion
+    if (depth > 100) return null; // Prevent deep recursion
+
+    // Skip non-content elements
+    const tag = element.tagName.toLowerCase();
+    if (['style', 'script', 'noscript', 'template'].includes(tag)) return null;
 
     const role = computeRole(element);
     const interactive = isInteractiveA11y(element);

@@ -1,5 +1,5 @@
 /**
- * USER_CLARIFICATION action
+ * REQUEST_INPUT action
  *
  * Shows clarification UI with loading state, generates options via LLM,
  * updates UI with options, waits for user response or timeout.
@@ -284,14 +284,26 @@ Context: User preferences KB: "User prefers fast delivery."
 - Include preference_source array with quoted fact text when option is based on KB preferences`;
 
 // Action definition
-export const USER_CLARIFICATION_ACTION: Action = {
-  name: 'USER_CLARIFICATION',
+export const REQUEST_INPUT_ACTION: Action = {
+  name: 'REQUEST_INPUT',
   description: 'Request user clarification with intelligent defaults. Generates options from context, ranks by predicted preference, shows overlay UI with countdown timer, and auto-selects best guess on timeout.',
-  examples: [
-    'Ask user which format they prefer',
-    'Get user confirmation before proceeding with important action',
-    'Clarify ambiguous request'
-  ],
+  tool_doc: {
+    use_when: [
+      'Required information cannot be inferred or observed',
+      'Multiple valid interpretations exist',
+      'User confirmation required before irreversible action'
+    ],
+    must: ['Ask only ONE question at a time'],
+    never: [
+      'Use if information can be discovered by checking the page',
+      'Use if uncertainty can be resolved via safe browser action'
+    ],
+    examples: [
+      'Ask user which format they prefer',
+      'Get user confirmation before proceeding with important action',
+      'Clarify ambiguous request'
+    ]
+  },
   input_schema: INPUT_SCHEMA,
   steps: [
     { type: 'function', handler: showLoadingUIStep },
