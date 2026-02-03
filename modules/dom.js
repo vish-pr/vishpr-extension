@@ -55,7 +55,6 @@ export const elements = {
   get debugTimeline() { return lazy('debugTimeline')(); },
   get debugTiming() { return lazy('debugTiming')(); },
   get debugCritiqueBadge() { return lazy('debugCritiqueBadge')(); },
-  get debugRefreshBtn() { return lazy('debugRefreshBtn')(); },
   get debugTraceTab() { return lazy('debugTraceTab')(); },
   get debugStatsTab() { return lazy('debugStatsTab')(); },
   get debugStatsRefreshBtn() { return lazy('debugStatsRefreshBtn')(); },

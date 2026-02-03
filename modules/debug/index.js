@@ -88,7 +88,6 @@ let prefsEditState = { editing: false, originalValue: '' };
 export async function initDebug() {
   elements.debugToggle.addEventListener('click', toggleMode);
   elements.debugClearBtn.addEventListener('click', reloadTraces);
-  elements.debugRefreshBtn.addEventListener('click', refreshCritique);
 
   // Tab switching
   document.querySelectorAll('[data-debug-tab]').forEach(tab => {
@@ -558,34 +557,6 @@ function restoreExpandedState(expandedPaths) {
   });
 }
 
-async function refreshCritique() {
-  if (state.selected < 0) return;
-  const run = state.history[state.selected];
-
-  // Capture current expanded state before re-render
-  const expandedState = captureExpandedState();
-
-  // Show loading state
-  elements.debugCritiqueBadge.textContent = '...';
-  elements.debugCritiqueBadge.className = 'badge badge-xs badge-ghost animate-pulse';
-
-  try {
-    const traceData = await getTraceById(run.id);
-    if (traceData?.trace) {
-      run.trace = traceData.trace;
-      run.critique = findCritiqueResult(traceData.trace);
-    }
-    renderTimeline(run);
-
-    // Restore expanded state after render
-    restoreExpandedState(expandedState);
-  } catch (e) {
-    elements.debugCritiqueBadge.textContent = '!';
-    elements.debugCritiqueBadge.className = 'badge badge-xs badge-error';
-    console.error('Refresh failed:', e);
-  }
-}
-
 async function loadStoredTraces() {
   try {
     const traces = await getTraces(50);
@@ -604,12 +575,33 @@ async function loadStoredTraces() {
 }
 
 async function reloadTraces() {
+  // Save currently selected trace ID before reload
+  const previousSelectedId = state.selected >= 0 ? state.history[state.selected]?.id : null;
+
+  // Capture expanded state of current trace view
+  const expandedState = captureExpandedState();
+
   await loadStoredTraces();
-  if (state.history.length > 0) {
-    selectHistory(0);
-  } else {
+
+  if (state.history.length === 0) {
     showPlaceholder('empty');
+    return;
   }
+
+  // Try to find and re-select the previously selected trace
+  if (previousSelectedId) {
+    const newIndex = state.history.findIndex(h => h.id === previousSelectedId);
+    if (newIndex >= 0) {
+      // Re-select the same trace to refresh its data
+      await selectHistory(newIndex);
+      // Restore expanded state after re-render
+      restoreExpandedState(expandedState);
+      return;
+    }
+  }
+
+  // Fall back to first trace if previous selection no longer exists
+  selectHistory(0);
 }
 
 async function deleteHistoryItem(idx) {
