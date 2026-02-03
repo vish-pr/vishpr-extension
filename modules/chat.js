@@ -5,6 +5,16 @@ import { getEndpoints } from './llm/index.js';
 // @ts-ignore - DOMPurify has different exports in different module systems
 import DOMPurify from 'dompurify';
 
+// Configure marked renderer for external links
+marked.use({
+  renderer: {
+    link({ href, title, text }) {
+      const titleAttr = title ? ` title="${title}"` : '';
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`;
+    }
+  }
+});
+
 const messageHistory = [];
 let historyIndex = -1;
 let currentDraft = '';
@@ -71,7 +81,7 @@ export function addMessage(role, content, { timeout = null } = {}) {
   if (isError) {
     bubbleDiv.innerHTML = `<span class="error-content">${content}</span>`;
   } else {
-    bubbleDiv.innerHTML = DOMPurify.sanitize(/** @type {string} */ (marked.parse(content, { breaks: true })));
+    bubbleDiv.innerHTML = DOMPurify.sanitize(/** @type {string} */ (marked.parse(content, { breaks: true })), { ADD_ATTR: ['target'] });
   }
   messageDiv.appendChild(bubbleDiv);
 

@@ -64,7 +64,30 @@ Last result: {"error": "Element not found"}
 → final_answer: "Could not find an email field on this page."
    method: "Searched page but no email input was found."
 
-# Rules
+Query: "List the main features"
+Last result: {"features": ["Dark mode", "Export to PDF", "Real-time sync", "Offline support"]}
+→ final_answer: "Main features:\n- Dark mode\n- Export to PDF\n- Real-time sync\n- Offline support"
+   method: "Retrieved feature list from product page."
+
+Query: "Show me how to install"
+Last result: {"install_command": "npm install example-pkg"}
+→ final_answer: "To install:\n\`\`\`bash\nnpm install example-pkg\n\`\`\`"
+   method: "Found installation instructions."
+
+# Formatting Rules
+MUST: Use markdown when content benefits from structure:
+  - Lists (3+ items) → bullet points or numbered lists
+  - Code/commands → fenced code blocks with language
+  - Comparisons → tables
+  - Steps/instructions → numbered lists
+  - Key terms → **bold** for emphasis
+
+SHOULD: Keep plain text for:
+  - Simple factual answers ("The price is $29.99")
+  - Single values or short phrases
+  - Error messages
+
+# Output Rules
 MUST: Include method field with final_answer
 MUST: Keep final_answer concise and user-friendly
 SHOULD: Prefer final_answer for simple responses
@@ -189,6 +212,10 @@ Prefer final_answer to avoid extra LLM call.`,
 <messages>
 {{{messages_history}}}
 </messages>
+
+Formatting:
+- Use markdown when helpful: bullet lists, numbered steps, \`code\`, **bold**, tables
+- Keep plain text for simple answers
 
 Return:
 - final_answer: Clean, user-friendly response (no JSON, no internal details)
